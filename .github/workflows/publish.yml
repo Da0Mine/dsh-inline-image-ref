@@ -1,9 +1,12 @@
 name: publish
 
-# 可选路线：本机 `npm run release` 是默认通道（本地直接 publish）。
-# 这条只在手动触发时跑，用于「换机器 / 想走 OIDC 不带 token」的场合；
-# 用之前要先在 npm 包设置里配好 Trusted Publisher（GitHub Actions: 本仓库 + publish.yml）。
+# 发版通道：推 tag（v*）→ 这里用 OIDC（Trusted Publishing）发 npm，全程没有 token、不会过期。
+# 本机 `npm run release` 默认就推 tag 走这条；带 `--local` 才退回本地 token 发布。
+# 需要先在 npm 包设置 → Access → Trusted Publisher 里配好：GitHub Actions / 本仓库 / publish.yml。
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:

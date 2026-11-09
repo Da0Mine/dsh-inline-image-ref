@@ -125,35 +125,39 @@ if (!marketOnly) {
   pkg.version = version;
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
 
-  /* 注意：这里必须显式指定 registry 与代理 —— 本机默认 registry 是 npmmirror，发不出去。 */
-  const env = {
-    ...process.env,
-    npm_config_registry: "https://registry.npmjs.org/",
-    npm_config_proxy: "http://127.0.0.1:7899",
-    npm_config_https_proxy: "http://127.0.0.1:7899"
-  };
-  try {
-    execSync("npm publish --access public", { stdio: "inherit", env });
-    record("npm publish", true);
-  } catch {
-    record("npm publish", false, "看上面 npm 的报错");
-    process.exitCode = 1;
+  /* 两条通道：
+     默认（OIDC）：只推 tag，让 publish.yml 用 Trusted Publishing 发 —— 无 token、不会过期。
+     --local    ：本机直接 npm publish（token 在 .npmrc），网络不便时用。 */
+  const useLocal = args.includes("--local");
+  if (useLocal) {
+    const env = {
+      ...process.env,
+      npm_config_registry: "https://registry.npmjs.org/",
+      npm_config_proxy: "http://127.0.0.1:7899",
+      npm_config_https_proxy: "http://127.0.0.1:7899"
+    };
+    try {
+      execSync("npm publish --access public", { stdio: "inherit", env });
+      record("npm publish（本地 token）", true);
+    } catch {
+      record("npm publish（本地 token）", false, "看上面 npm 的报错");
+      process.exitCode = 1;
+    }
   }
 
-  /* 打 tag 存档（CI 那条路只在 workflow_dispatch 手动跑，不会自动重复发布） */
   sh("git add package.json", { quiet: true });
   sh('git commit -m "release ' + tag + '" --no-verify', { quiet: true });
   sh("git tag " + tag, { quiet: true });
   try {
     sh("git -c protocol.version=0 push origin HEAD --follow-tags", { quiet: true });
-    record("已 push " + tag, true);
+    record("已 push " + tag + (useLocal ? "" : "（CI 开始发版）"), true);
   } catch (error) {
     record("已 push " + tag, false, "git 直连要走 protocol.version=0；可稍后手动 push");
   }
 
-  console.log("[2] 等 registry 翻牌");
+  console.log("[2] 等 registry 翻牌" + (useLocal ? "" : "（CI 大约 1-2 分钟）"));
   let live = false;
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 30; i += 1) {
     try {
       const meta = JSON.parse(
         shOut('curl.exe -s --max-time 30 -x http://127.0.0.1:7899 "https://registry.npmjs.org/' + pkg.name + "/" + version + '"') || "{}"
@@ -175,7 +179,8 @@ if (!marketOnly) {
 
 if (!npmOnly) {
   console.log("[3] 市场条目");
-  const ymlPath = "data/plugins/" + OWNER.toLowerCase() + "__" + REPO + ".yml";
+  /* 文件名必须与 url 的 owner/repo 大小写一致（市场校验器硬性要求） */
+  const ymlPath = "data/plugins/" + OWNER + "__" + REPO + ".yml";
   const branch = "add/" + REPO + "-v" + version.replace(/\./g, "");
   const yaml = [
     "url: https://github.com/" + OWNER + "/" + REPO,
@@ -186,6 +191,23 @@ if (!npmOnly) {
     "  zh: " + DESCRIPTION_ZH,
     ""
   ].join("\n");
+
+  /* 市场条目本身不分版本（只有 url/name/category/description）：内容没变就别开 PR。
+     每周目都提一次空 PR 只会骚扰维护者。 */
+  const changed = api("GET", "/repos/" + MARKET_UPSTREAM + "/contents/" + encodeURIComponent(ymlPath));
+  if (changed.status === 200 && changed.body?.content) {
+    const current = Buffer.from(changed.body.content, "base64").toString("utf8");
+    const normalize = (text) => text.replace(/\r\n/g, "\n").trim();
+    if (normalize(current) === normalize(yaml)) {
+      record("市场条目无变化，跳过 PR", true, ymlPath);
+      if (!marketOnly) {
+        /* 条目没变，剩下只有 npm 那半，已经做完了 */
+      }
+      console.log("\n=== 结果 ===");
+      for (const step of steps) console.log((step.ok ? "✔" : "✘") + " " + step.name + (step.detail ? "  " + step.detail : ""));
+      process.exit(process.exitCode ?? 0);
+    }
+  }
 
   /* fork（幂等）：分支与提交都要落在自己的 fork 上，PR 的 head 才能写 Da0Mine:<branch> */
   const FORK = OWNER + "/" + MARKET_UPSTREAM.split("/")[1];
