@@ -59,7 +59,7 @@ function githubToken() {
 
 function api(method, path, body) {
   const dir = mkdtempSync(join(tmpdir(), "rel-api-"));
-  const argsList = ["-s", "-S", "--max-time", "60", "-w", "\n%{http_code}"];
+  const argsList = ["-s", "-S", "--max-time", "60", "-x", "http://127.0.0.1:7899", "-w", "\n%{http_code}"];
   argsList.push("-H", "Authorization: Bearer " + githubToken());
   argsList.push("-H", "Accept: application/vnd.github+json");
   argsList.push("-H", "User-Agent: dsh-release");
@@ -99,7 +99,7 @@ function record(name, ok, detail) {
   console.log((ok ? "  OK   " : "  FAIL ") + name + (detail ? "  -> " + detail : ""));
 }
 
-/* ───────────── 1. 版本 + tag + push ───────────── */
+/* ───────────── 1. 版本 + 本地发 npm + push ───────────── */
 
 const pkgPath = "package.json";
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
@@ -122,19 +122,39 @@ if (!marketOnly) {
 
   pkg.version = version;
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+
+  /* 注意：这里必须显式指定 registry 与代理 —— 本机默认 registry 是 npmmirror，发不出去。 */
+  const env = {
+    ...process.env,
+    npm_config_registry: "https://registry.npmjs.org/",
+    npm_config_proxy: "http://127.0.0.1:7899",
+    npm_config_https_proxy: "http://127.0.0.1:7899"
+  };
+  try {
+    execSync("npm publish --access public", { stdio: "inherit", env });
+    record("npm publish", true);
+  } catch {
+    record("npm publish", false, "看上面 npm 的报错");
+    process.exitCode = 1;
+  }
+
+  /* 打 tag 存档（CI 那条路只在 workflow_dispatch 手动跑，不会自动重复发布） */
   sh("git add package.json", { quiet: true });
   sh('git commit -m "release ' + tag + '" --no-verify', { quiet: true });
   sh("git tag " + tag, { quiet: true });
-  sh("git push origin HEAD --follow-tags", { quiet: true });
-  record("已 push " + tag, true);
+  try {
+    sh("git -c protocol.version=0 push origin HEAD --follow-tags", { quiet: true });
+    record("已 push " + tag, true);
+  } catch (error) {
+    record("已 push " + tag, false, "git 直连要走 protocol.version=0；可稍后手动 push");
+  }
 
   console.log("[2] 等 registry 翻牌");
   let live = false;
-  for (let i = 0; i < 40; i += 1) {
-    await new Promise((r) => setTimeout(r, 15000));
+  for (let i = 0; i < 20; i += 1) {
     try {
       const meta = JSON.parse(
-        shOut('curl.exe -s --max-time 30 "https://registry.npmjs.org/' + pkg.name + "/" + version + '"') || "{}"
+        shOut('curl.exe -s --max-time 30 -x http://127.0.0.1:7899 "https://registry.npmjs.org/' + pkg.name + "/" + version + '"') || "{}"
       );
       if (meta.version === version) {
         live = true;
@@ -143,8 +163,9 @@ if (!marketOnly) {
     } catch {
       /* 还没上线，继续等 */
     }
+    await new Promise((r) => setTimeout(r, 8000));
   }
-  record("npm 上已有 " + version, live, live ? "" : "等了 10 分钟还没出现，去 Actions 看日志");
+  record("npm 上已有 " + version, live, live ? "" : "5 分钟内没翻牌，去 registry 手动确认");
   if (!live) process.exitCode = 1;
 }
 

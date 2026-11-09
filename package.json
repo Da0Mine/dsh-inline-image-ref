@@ -49,5 +49,8 @@
   "homepage": "https://github.com/Da0Mine/dsh-inline-image-ref#readme",
   "bugs": {
     "url": "https://github.com/Da0Mine/dsh-inline-image-ref/issues"
+  },
+  "scripts": {
+    "release": "node scripts/release.mjs"
   }
 }

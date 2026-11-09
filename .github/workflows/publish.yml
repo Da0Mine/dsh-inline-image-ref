@@ -1,11 +1,9 @@
 name: publish
 
-# 发版走「推 tag → CI 用 OIDC 发 npm」：不用 token、不会过期，
-# 也绕开 npm 2027-01 起对 bypass-2FA token 直接发布的限制。
+# 可选路线：本机 `npm run release` 是默认通道（本地直接 publish）。
+# 这条只在手动触发时跑，用于「换机器 / 想走 OIDC 不带 token」的场合；
+# 用之前要先在 npm 包设置里配好 Trusted Publisher（GitHub Actions: 本仓库 + publish.yml）。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:

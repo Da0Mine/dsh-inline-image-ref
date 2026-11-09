@@ -57,16 +57,34 @@ DSH 的 fs 沙箱对**读**不设限、对**写**允许工作区与平台临时�
 
 ## 安装
 
-`~/.dsh/profiles/desktop/package.json`：
+从 npm 装（推荐）：
+
+```bash
+npm install dsh-inline-image-ref
+```
+
+手工装进桌面 profile：`~/.dsh/profiles/desktop/package.json`
 
 ```json
 {
-  "dependencies": { "dsh-inline-image-ref": "link:D:/Plugins/dsh-inline-image-ref" },
+  "dependencies": { "dsh-inline-image-ref": "link:./node_modules/dsh-inline-image-ref" },
   "dsh": { "profile": { "bundles": [ "…", "dsh-inline-image-ref" ] } }
 }
 ```
 
 并在 `node_modules` 建同目录 Junction。**改完要重启宿主**（客户端 bundle 在启动时聚合，只有 Client 半的插件也一样）。
+
+## 发版（一条命令）
+
+```bash
+npm run release              # patch：0.5.0 → 0.5.1，发 npm + 提市场 PR
+npm run release -- minor
+npm run release -- 1.2.0
+npm run release -- patch --npm-only      # 只发 npm
+npm run release -- --market-only         # 只提市场（版本不变）
+```
+
+它做的事：跑 `_publish-smoke` → 升版本 → `npm publish`（显式指定 registry.npmjs.org + 本机代理）→ 打 tag、push → 轮询 registry 确认上线 → 把市场条目 `data/plugins/da0mine__dsh-inline-image-ref.yml` 提到 awesome-dsh-plugin 并开 PR。
 
 ## 已知限制
 
