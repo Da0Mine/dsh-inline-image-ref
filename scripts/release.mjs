@@ -59,7 +59,7 @@ function githubToken() {
 
 function api(method, path, body) {
   const dir = mkdtempSync(join(tmpdir(), "rel-api-"));
-  const argsList = ["-s", "-S", "--max-time", "60", "-x", "http://127.0.0.1:7899", "-w", "\n%{http_code}"];
+  const argsList = ["-s", "-S", "--max-time", "60", "-x", "http://127.0.0.1:7899", "-w", "|||%{http_code}"];
   argsList.push("-H", "Authorization: Bearer " + githubToken());
   argsList.push("-H", "Accept: application/vnd.github+json");
   argsList.push("-H", "User-Agent: dsh-release");
@@ -70,12 +70,14 @@ function api(method, path, body) {
     argsList.push("-H", "Content-Type: application/json", "--data-binary", "@" + file);
   }
   argsList.push(path.startsWith("http") ? path : "https://api.github.com" + path);
-  const out = execSync(["curl.exe", ...argsList].map((a) => '"' + String(a).replace(/"/g, '\\"') + '"').join(" "), {
+  const cmdLine = ["curl.exe", ...argsList].map((a) => '"' + String(a).replace(/"/g, '\\"') + '"').join(" ");
+  if (process.env.REL_DEBUG) console.log("DEBUG " + cmdLine.replace(/Bearer [^"]+/u, "Bearer ***"));
+  const out = execSync(cmdLine, {
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024
   });
-  const cut = out.lastIndexOf("\n");
-  const status = Number(out.slice(cut + 1).trim());
+  const cut = out.lastIndexOf("|||");
+  const status = Number(out.slice(cut + 3).trim());
   let parsed;
   try {
     parsed = JSON.parse(out.slice(0, cut) || "null");
@@ -179,50 +181,74 @@ if (!npmOnly) {
     "url: https://github.com/" + OWNER + "/" + REPO,
     "name: " + OWNER + "/" + REPO,
     "category: " + CATEGORY,
-    'description.en: "' + DESCRIPTION_EN.replace(/"/g, '\\"') + '"',
-    "description.zh: " + DESCRIPTION_ZH,
+    "description:",
+    '  en: "' + DESCRIPTION_EN.replace(/"/g, '\\"') + '"',
+    "  zh: " + DESCRIPTION_ZH,
     ""
   ].join("\n");
 
-  /* fork（幂等） */
+  /* fork（幂等）：分支与提交都要落在自己的 fork 上，PR 的 head 才能写 Da0Mine:<branch> */
+  const FORK = OWNER + "/" + MARKET_UPSTREAM.split("/")[1];
   const fork = api("POST", "/repos/" + MARKET_UPSTREAM + "/forks", {});
-  record("fork 就绪", fork.status === 202 || fork.status === 200 || fork.status === 422, "HTTP " + fork.status);
+  let ready = fork.status === 202 || fork.status === 200 || fork.status === 422;
+  /* 202 是异步建仓：等它真能读 */
+  for (let i = 0; i < 20 && ready; i += 1) {
+    const probe = api("GET", "/repos/" + FORK);
+    if (probe.status === 200) {
+      ready = true;
+      break;
+    }
+    ready = false;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  record("fork 就绪", ready, FORK);
 
   /* 分支：从 upstream 的 ref 直接建（别 merge，unrelated histories） */
   const upstreamMain = api("GET", "/repos/" + MARKET_UPSTREAM + "/git/ref/heads/" + MARKET_BRANCH_BASE);
   const sha = upstreamMain.body?.object?.sha;
   record("读到 upstream head", Boolean(sha), sha ? sha.slice(0, 8) : "HTTP " + upstreamMain.status);
 
-  let putBody = {
-    message: "add " + OWNER + "/" + REPO + " v" + version,
-    content: Buffer.from(yaml, "utf8").toString("base64"),
-    branch
-  };
-  let put = api("PUT", "/repos/" + MARKET_UPSTREAM + "/contents/" + ymlPath, putBody);
-  if (put.status === 404 || put.status === 422) {
-    /* 分支还不存在：先建分支 */
-    api("POST", "/repos/" + MARKET_UPSTREAM + "/git/refs", { ref: "refs/heads/" + branch, sha });
-    put = api("PUT", "/repos/" + MARKET_UPSTREAM + "/contents/" + ymlPath, putBody);
-  }
-  if (put.status === 422 && String(put.body?.message || "").includes("sha")) {
-    /* 文件已存在：带 sha 再 PUT */
-    const existing = api("GET", "/repos/" + MARKET_UPSTREAM + "/contents/" + ymlPath + "?ref=" + branch);
-    putBody = { ...putBody, sha: existing.body?.sha };
-    put = api("PUT", "/repos/" + MARKET_UPSTREAM + "/contents/" + ymlPath, putBody);
-  }
-  record("市场条目已提交", put.status === 200 || put.status === 201, "HTTP " + put.status + " " + ymlPath);
+  if (ready && sha) {
+    /* 分支不存在才建；已存在（重新发版）就复用 */
+    const hasBranch = api("GET", "/repos/" + FORK + "/git/ref/heads/" + branch);
+    if (hasBranch.status !== 200) {
+      const made = api("POST", "/repos/" + FORK + "/git/refs", { ref: "refs/heads/" + branch, sha });
+      record("分支已建", made.status === 201 || made.status === 200 || made.status === 422, branch + " ← " + (made.status === 422 ? "已存在" : "ok"));
+    } else {
+      record("分支已存在", true, branch);
+    }
 
-  const pr = api("POST", "/repos/" + MARKET_UPSTREAM + "/pulls", {
-    head: OWNER + ":" + branch,
-    base: MARKET_BRANCH_BASE,
-    title: "Add " + OWNER + "/" + REPO + " (" + pkg.name + " v" + version + ")",
-    body:
-      "投稿 " + OWNER + "/" + REPO + "\n\n" +
-      "- npm: `" + pkg.name + "@" + version + "`\n" +
-      "- 插件类型：client 半边（composer 交互）+ host 半边（落盘路由）\n" +
-      "- " + DESCRIPTION_ZH + "\n"
-  });
-  record("PR", pr.status === 201 || pr.status === 200, pr.body?.html_url || "HTTP " + pr.status + " " + JSON.stringify(pr.body).slice(0, 160));
+    const putBody = {
+      message: "add " + OWNER + "/" + REPO + " v" + version,
+      content: Buffer.from(yaml, "utf8").toString("base64"),
+      branch
+    };
+    let put = api("PUT", "/repos/" + FORK + "/contents/" + ymlPath, putBody);
+    if (put.status === 422) {
+      /* 该分支上文件已存在：带 sha 再 PUT */
+      const existing = api("GET", "/repos/" + FORK + "/contents/" + ymlPath + "?ref=" + branch);
+      if (existing.status === 200) {
+        put = api("PUT", "/repos/" + FORK + "/contents/" + ymlPath, { ...putBody, sha: existing.body?.sha });
+      }
+    }
+    record("市场条目已提交", put.status === 200 || put.status === 201, "HTTP " + put.status + " " + ymlPath);
+
+    const pr = api("POST", "/repos/" + MARKET_UPSTREAM + "/pulls", {
+      head: OWNER + ":" + branch,
+      base: MARKET_BRANCH_BASE,
+      title: "Add " + OWNER + "/" + REPO + " (" + pkg.name + " v" + version + ")",
+      body:
+        "投稿 " + OWNER + "/" + REPO + "\n\n" +
+        "- npm: `" + pkg.name + "@" + version + "`\n" +
+        "- 插件类型：client 半边（composer 交互）+ host 半边（落盘路由）\n" +
+        "- " + DESCRIPTION_ZH + "\n"
+    });
+    record(
+      "PR",
+      pr.status === 201 || pr.status === 200,
+      pr.body?.html_url || "HTTP " + pr.status + " " + JSON.stringify(pr.body).slice(0, 200)
+    );
+  }
 }
 
 console.log("\n=== 结果 ===");
