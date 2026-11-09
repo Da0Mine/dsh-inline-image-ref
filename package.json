@@ -1,0 +1,53 @@
+{
+  "name": "dsh-inline-image-ref",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DSH 插件：把拖入/粘贴进输入框的图片当「文件」处理 —— 光标处插 @路径 胶囊（不占附件栏），悬停即可看原图。Images become @path chips at the caret with a hover preview.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "image",
+    "attachment",
+    "reference",
+    "composer",
+    "hover-preview"
+  ],
+  "license": "MIT",
+  "author": "江浩文 (Da0Mine)",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "_publish-smoke.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Da0Mine/dsh-inline-image-ref.git"
+  },
+  "homepage": "https://github.com/Da0Mine/dsh-inline-image-ref#readme",
+  "bugs": {
+    "url": "https://github.com/Da0Mine/dsh-inline-image-ref/issues"
+  }
+}

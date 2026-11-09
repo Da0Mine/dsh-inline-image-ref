@@ -1,0 +1,37 @@
+name: publish
+
+# 发版走「推 tag → CI 用 OIDC 发 npm」：不用 token、不会过期，
+# 也绕开 npm 2027-01 起对 bypass-2FA token 直接发布的限制。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm Trusted Publishing（OIDC）要这个
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: npm 要 11.5+ 才认 OIDC
+        run: npm install -g npm@latest
+
+      - name: 自检（不装 DSH、不开浏览器）
+        run: node _publish-smoke.mjs
+
+      - name: 发到 npm
+        run: npm publish --access public --provenance
+
+      - name: 确认线上 dist-tag
+        run: |
+          npm view "$(node -p "require('./package.json').name")" version

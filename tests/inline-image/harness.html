@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>dsh-inline-image harness</title>
+<style>
+  body { margin: 0; padding: 40px; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; background: #1b1b1f; color: #e6e6ea; }
+  [data-composer-card] { border: 1px solid #3a3a45; border-radius: 12px; padding: 12px; max-width: 640px; }
+  [data-composer-input] { min-height: 40px; outline: none; }
+  ._6XhDDa_reference { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 6px; background: rgba(77,147,248,.16); }
+  ._6XhDDa_reference._1AbCd_chip > ._1AbCd_label { font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div data-composer-card>
+    <div data-composer-input contenteditable="true">看看这张图：<span class="NOA9Ua_chip _6XhDDa_reference" title="a.png"><span class="NOA9Ua_label">a.png</span></span></div>
+  </div>
+  <p id="outside">输入框外的一个 <span class="_1AbCd_chip" title="a.png">a.png</span></p>
+
+  <!-- 发出去的消息：引用渲染成蓝色链接，DOM 上没有 title，只有 @路径 文本 -->
+  <div data-chat-flow>
+    <div data-chat-turn="1">
+      <div class="LOmM4q_bubble">
+        <span class="w30fQq_file">看这张 </span><span class="w30fQq_filePath">@D:\pics\a.png</span><span class="w30fQq_file"> 的图</span>
+      </div>
+      <div class="LOmM4q_bubble">
+        <span class="w30fQq_filePath" title="D:\pics\c.png">@D:\pics\c.png</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* 宿主 ModuleLoader 的替身：抓住 factory，稍后自己 apply。 */
+  window.__ModuleLoader__ = { load: function (mod) { window.__mod = mod; } };
+</script>
+<script src="./client.js"></script>
+<script>
+  /* ── 宿主桥的替身：pathFor(file) 读我们贴在 File 上的 __testPath ───────────────── */
+  window.__DSH_HOST_PATHS__ = {
+    pathFor: function (file) { return (file && typeof file.__testPath === "string") ? file.__testPath : ""; }
+  };
+
+  /* ── 一张 2x2 的红点 PNG（够真的能解码，方便断言 <img> 出现）──────────────────── */
+  var PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8DAwMDAxMDAwMAAAA4AAf8L2S0AAAAASUVORK5CYII=";
+  function pngBytes() {
+    var bin = atob(PNG_BASE64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  /* ── 插件跑起来 ─────────────────────────────────────────────────────────────── */
+  window.__calls = { readBytes: [], saves: [], chips: [], attachments: [], texts: [] };
+  window.__slots = [];
+  window.__disposers = [];
+
+  /* 输入机的替身：只实现插件用到的那几样（读光标、插引用、挂附件）。 */
+  var shellStub = {
+    draft: "",
+    state: {
+      getSnapshot: function () {
+        return { draft: shellStub.draft, draftRev: shellStub.draft.length + 1, phase: "plain" };
+      }
+    },
+    caretSpan: function () {
+      return { start: shellStub.draft.length, end: shellStub.draft.length };
+    },
+    insertText: function (text, span) {
+      window.__calls.texts.push({ text: text, span: span });
+      shellStub.draft += text;
+      return true;
+    },
+    insertReference: function (ref, span) {
+      window.__calls.chips.push({ ref: ref, span: span });
+      shellStub.draft += ref.ref + " ";
+      return true;
+    },
+    addAttachments: function (ids) {
+      window.__calls.attachments.push(ids);
+      return true;
+    }
+  };
+
+  var conversationStub = {
+    input: {
+      for: function () { return shellStub; }
+    },
+    createDrafts: function (sessionId, files) {
+      return files.map(function (file, index) { return { id: "draft-" + index + "-" + file.name }; });
+    }
+  };
+
+  var ctxStub = {
+    effect: function (fn) {
+      var dispose = fn();
+      window.__disposers.push(dispose);
+      return dispose;
+    },
+    slots: {
+      inject: function (name, register) { return register(); },
+      register: function (spec, Component) {
+        window.__slots.push({ spec: spec, Component: Component });
+        return function () {};
+      }
+    },
+    get: function (name) {
+      if (name === "remote.workspaceFiles") {
+        return {
+          readBytes: function (sessionId, path, options, signal) {
+            window.__calls.readBytes.push({ sessionId: sessionId, path: path });
+            return Promise.resolve({ ok: true, value: { data: pngBytes(), offset: 0, eof: true, absolutePath: path, version: "v1" } });
+          }
+        };
+      }
+      if (name === "conversation") return conversationStub;
+      return undefined;
+    },
+    sessions: {
+      scope: function () { return {}; },
+      list: {
+        getSnapshot: function () {
+          return { byId: { "session-1": { cwd: "D:\\work" } } };
+        }
+      }
+    }
+  };
+
+  /* 宿主落盘路由的替身：POST /dsh-inline-image/save → 返回一个临时目录下的假路径。 */
+  var realFetch = window.fetch.bind(window);
+  var TEMP_ROOT = "C:\\Users\\tester\\AppData\\Local\\Temp\\dsh-inline-image";
+  window.fetch = function (url, init) {
+    var text = String(url);
+    if (text.indexOf("/dsh-inline-image/save") >= 0) {
+      var name = decodeURIComponent((text.split("name=")[1] || "").split("&")[0] || "file");
+      window.__calls.saves.push({ url: text, method: init && init.method, bytes: init && init.body ? init.body.size : -1 });
+      var hash = "abcdef0123456789";
+      var finalName = name.replace(/\.[^.]+$/u, "") + "-" + hash + (/\.[^.]+$/u.test(name) ? name.slice(name.lastIndexOf(".")) : "");
+      var dir = TEMP_ROOT + "\\ab";
+      return Promise.resolve(new Response(JSON.stringify({
+        ok: true,
+        value: { path: dir + "\\" + finalName, name: finalName, originalName: name, dir: dir }
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }));
+    }
+    return realFetch(url, init);
+  };
+
+  var reactStub = {
+    useEffect: function (effect) { window.__lastEffect = effect; return undefined; },
+    createElement: function () { return null; }
+  };
+
+  var mod = window.__mod.factory(function (name) {
+    if (name === "react") return reactStub;
+    throw new Error("unexpected require: " + name);
+  });
+  mod.apply(ctxStub);
+
+  /* dock 槽的桥组件：模拟宿主挂载（拿到 sessionId → 记进插件）。 */
+  var bridgeSpec = window.__slots.length > 0 ? window.__slots[0] : null;
+  window.__mountBridge = function (sessionId) {
+    if (bridgeSpec === null) throw new Error("dock 槽没注册上");
+    bridgeSpec.Component({ sessionId: sessionId });
+    if (typeof window.__lastEffect === "function") window.__lastEffect();
+  };
+
+  /* ── 测试用探针 ─────────────────────────────────────────────────────────────── */
+  window.__preview = function () {
+    var nodes = document.querySelectorAll("[data-dsh-inline-image-preview]");
+    if (nodes.length === 0) return null;
+    var popover = nodes[0];
+    var image = popover.querySelector("img");
+    var caption = popover.querySelector("[data-dsh-inline-image-caption]");
+    return {
+      count: nodes.length,
+      hasImage: image !== null,
+      src: image === null ? null : image.getAttribute("src"),
+      caption: caption === null ? null : caption.textContent,
+      left: Math.round(popover.getBoundingClientRect().left)
+    };
+  };
+  window.__labels = function () {
+    try { return JSON.parse(window.localStorage.getItem("dsh-inline-image/labels/v1") || "null"); } catch (e) { return "unreadable"; }
+  };
+
+  /* 把 Remote 通道抽掉：验证插件在缺服务时只是「读不到图」，不抛错。 */
+  window.__killRemote = function () {
+    var original = ctxStub.get;
+    ctxStub.get = function (name) {
+      if (name === "remote.workspaceFiles" || name === "remote") return undefined;
+      return original(name);
+    };
+    window.__remoteKilled = true;
+  };
+
+  /* 造一次粘贴：走 ClipboardEvent + clipboardData，和官方 `items[i].getAsFile()` 同一条路 */
+  window.__paste = function (specs, text) {
+    function build(spec) {
+      var file = new File([new Uint8Array([1, 2, 3, 4])], spec.name, { type: spec.type });
+      if (typeof spec.path === "string") {
+        Object.defineProperty(file, "__testPath", { value: spec.path, configurable: true, enumerable: false });
+      }
+      return file;
+    }
+    var transfer = new DataTransfer();
+    for (var i = 0; i < specs.length; i += 1) transfer.items.add(build(specs[i]));
+    if (typeof text === "string" && text !== "") transfer.setData("text/plain", text);
+    var event = new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true });
+    var input = document.querySelector("[data-composer-input]");
+    input.dispatchEvent(event);
+    var seen = [];
+    for (var j = 0; j < event.clipboardData.items.length; j += 1) {
+      var item = event.clipboardData.items[j];
+      if (item.kind !== "file") continue;
+      var file = item.getAsFile();
+      seen.push({ name: file.name, type: file.type, hasPath: typeof file.__testPath === "string" });
+    }
+    return { seen: seen, prevented: event.defaultPrevented };
+  };
+
+  /* 造一次拖放：带 __testPath 的图片 / 没有路径的图片 / 普通文件 */
+  window.__drop = function (specs) {
+    function build(spec) {
+      var file = new File([new Uint8Array([1, 2, 3, 4])], spec.name, { type: spec.type });
+      if (typeof spec.path === "string") {
+        Object.defineProperty(file, "__testPath", { value: spec.path, configurable: true, enumerable: false });
+      }
+      return file;
+    }
+    var files = specs.map(build);
+    var transfer = new DataTransfer();
+    for (var i = 0; i < files.length; i += 1) transfer.items.add(files[i]);
+    var event = new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+    /* 官方处理器看到的就是同一批 File：把它们的 type 读回来，验证「降级」是否生效。 */
+    var seen = [];
+    var list = event.dataTransfer.files;
+    for (var j = 0; j < list.length; j += 1) {
+      seen.push({ name: list[j].name, type: list[j].type, hasPath: typeof list[j].__testPath === "string" });
+    }
+    return { seen: seen, readBackSame: list[0] === files[0], prevented: event.defaultPrevented };
+  };
+
+  /* 清空调用记录，便于逐条断言 */
+  window.__resetCalls = function () {
+    window.__calls.readBytes.length = 0;
+    window.__calls.texts.length = 0;
+    window.__calls.saves.length = 0;
+    window.__calls.chips.length = 0;
+    window.__calls.attachments.length = 0;
+  };
+</script>
+</body>
+</html>
+

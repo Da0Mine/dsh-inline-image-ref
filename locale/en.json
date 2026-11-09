@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Inline Image as File",
+    "description": "Dropped or pasted images become @path reference chips at the caret instead of an attachment rail; hover a chip to preview the image."
+  }
+}
