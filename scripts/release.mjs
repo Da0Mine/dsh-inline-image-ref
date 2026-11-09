@@ -147,9 +147,12 @@ if (!marketOnly) {
 
   sh("git add package.json", { quiet: true });
   sh('git commit -m "release ' + tag + '" --no-verify', { quiet: true });
-  sh("git tag " + tag, { quiet: true });
+  /* 必须是 annotated tag + 显式推 refs/tags：轻量 tag 配 --follow-tags 不会推到远端，
+     CI 收不到 push 事件，等于「发了版但没人发」（2026-11-09 踩过）。 */
+  sh('git tag -a ' + tag + ' -m "release ' + tag + '"', { quiet: true });
   try {
-    sh("git -c protocol.version=0 push origin HEAD --follow-tags", { quiet: true });
+    sh("git -c protocol.version=0 push origin HEAD", { quiet: true });
+    sh("git -c protocol.version=0 push origin refs/tags/" + tag, { quiet: true });
     record("已 push " + tag + (useLocal ? "" : "（CI 开始发版）"), true);
   } catch (error) {
     record("已 push " + tag, false, "git 直连要走 protocol.version=0；可稍后手动 push");
