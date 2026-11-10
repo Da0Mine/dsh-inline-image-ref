@@ -67,6 +67,8 @@ window.__ModuleLoader__.load({
 		var TEXT_PREVIEW_MAX = 460;
 		/** 文本预览里 <pre> 的标记属性。 */
 		var TEXT_ATTR = "data-dsh-inline-image-text";
+		/** 转录里允许「仅凭文字」认出来的行内标签：段落/输入框根不算（它们的 textContent 可能正好是文件名）。 */
+		var INLINE_TAGS = { SPAN: true, A: true, B: true, STRONG: true, EM: true, I: true, CODE: true };
 
 		/** 插件级状态：当前会话 id（由 dock 槽的桥组件写入）与宿主 ctx。 */
 		var bridge = { ctx: null, sessionId: "" };
@@ -986,11 +988,28 @@ window.__ModuleLoader__.load({
 				if (!(target instanceof Element)) return;
 				var node = target;
 				var found = null;
-				/* 从指针落到的那层往上找三层：胶囊/链接的内层 span 也会先撞上。 */
+				/* 命中规则收紧过一次（用户反馈：鼠标在图标右边一段距离也会弹浮层）：
+				      · 输入框里**只认胶囊自己**（[data-composer-chip] 的宿元素）。以前靠「这段文字正好
+				        等于文件名」兜底，于是一整行/整个输入框根（它的 textContent 恰好就是那颗胶囊的
+				        名字加个空格）也会命中 —— 悬停在旁边空白处就弹了。
+				      · 转录里的蓝色链接没有这个标记，才退回「叶子行内元素 + 整段就是一个 @路径」。 */
 				for (var depth = 0; depth < 4 && node !== null && node !== void 0; depth += 1) {
 					if (!inPreviewZone(node)) return;
-					found = pathOfNode(node);
-					if (found !== null) break;
+					var chip = node.closest("[data-composer-chip]");
+					if (chip !== null && chip !== void 0) {
+						found = pathOfNode(chip);
+						if (found !== null) {
+							node = chip;
+							break;
+						}
+					}
+					/* 转录区放宽一点：那边的链接可能是 div/span 包着图标，只要是叶子节点且整段就是一个
+					   引用就认（这正是用户要的「发出去的消息里也能看」）。输入框里则只认胶囊标记。 */
+					var inTranscript = node.closest("[data-chat-turn],[data-chat-flow]") !== null;
+					if (node.childElementCount === 0 && (INLINE_TAGS[node.tagName] === true || inTranscript)) {
+						found = pathOfNode(node);
+						if (found !== null) break;
+					}
 					node = node.parentElement;
 				}
 				if (found === null || node === null || node === void 0) return;

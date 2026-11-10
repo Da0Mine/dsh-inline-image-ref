@@ -279,6 +279,27 @@ function check(name, ok, detail) {
   await page.waitForTimeout(120);
   check("浮层已移除", (await page.evaluate(() => window.__preview())) === null);
 
+  console.log("[5b] 悬停在胶囊旁边（整行 / 输入框根）不弹 —— 这一行的文字恰好就是胶囊的名字");
+  await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.setAttribute("data-composer-card", "");
+    const root = document.createElement("div");
+    root.setAttribute("data-composer-input", "");
+    const chip = document.createElement("span");
+    chip.setAttribute("data-composer-chip", "reference");
+    chip.className = "_6XhDDa_reference";
+    chip.setAttribute("title", "a.png");
+    root.appendChild(chip);
+    root.appendChild(document.createTextNode(" "));
+    host.appendChild(root);
+    document.getElementById("stage").appendChild(host);
+    /* 悬停在「输入框根」上：它的 textContent 正好是 "a.png "，旧逻辑会当成命中胶囊 */
+    root.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+  });
+  await page.waitForTimeout(200);
+  const besideChip = await page.evaluate(() => window.__preview());
+  check("不在胶囊上就不弹（以前会）", besideChip === null, besideChip && besideChip.count);
+
   console.log("[6b] 转录区不停自滚时，浮层要跟着走而不是被收掉");
   await page.evaluate(() => {
     const chip = document.querySelector("[data-composer-input] span[title='a.png']");
@@ -313,6 +334,7 @@ function check(name, ok, detail) {
   await page.evaluate(() => {
     const input = document.querySelector("[data-composer-input]");
     const chip = document.createElement("span");
+    chip.setAttribute("data-composer-chip", "reference");
     chip.className = "totally-different";
     chip.setAttribute("title", "a.png");
     input.appendChild(chip);
@@ -340,6 +362,7 @@ function check(name, ok, detail) {
   await page.evaluate(() => {
     const input = document.querySelector("[data-composer-input]");
     const chip = document.createElement("span");
+    chip.setAttribute("data-composer-chip", "reference");
     chip.className = "_6XhDDa_reference _1AbCd_chip";
     chip.setAttribute("title", "note.txt");
     input.appendChild(chip);
@@ -387,6 +410,7 @@ function check(name, ok, detail) {
     window.__drop([{ name: "b.png", type: "image/png", path: "D:\\pics\\b.png" }]);
     const input = document.querySelector("[data-composer-input]");
     const chip = document.createElement("span");
+    chip.setAttribute("data-composer-chip", "reference");
     chip.className = "_6XhDDa_reference _1AbCd_chip";
     chip.setAttribute("title", "b.png");
     input.appendChild(chip);
