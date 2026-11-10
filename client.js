@@ -69,6 +69,10 @@ window.__ModuleLoader__.load({
 		var TEXT_ATTR = "data-dsh-inline-image-text";
 		/** 转录里允许「仅凭文字」认出来的行内标签：段落/输入框根不算（它们的 textContent 可能正好是文件名）。 */
 		var INLINE_TAGS = { SPAN: true, A: true, B: true, STRONG: true, EM: true, I: true, CODE: true };
+		/** 草稿变化后多久检查一次「有没有裸的 @图片路径」——防抖，别每敲一个字都算。 */
+		var RESTORE_DEBOUNCE_MS = 400;
+		/** 每轮最多查多少个记过的名字（labels 记 300 条，从最近插入的开始倒着查）。 */
+		var RESTORE_MAX_CANDIDATES = 50;
 
 		/** 插件级状态：当前会话 id（由 dock 槽的桥组件写入）与宿主 ctx。 */
 		var bridge = { ctx: null, sessionId: "" };
@@ -753,6 +757,83 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		/* ═════════ 第四件事：把草稿里「裸的 @图片路径」还原成胶囊 ═════════
+		 *
+		 * 为什么需要：回退对话（dsh-rewind-plugin）是通过 `setDraft(纯文本)` 把草稿写回去的 ——
+		 * 它只恢复文字（的剪贴板投影）和图片附件，**不恢复引用胶囊**。于是回退后那些图就成了
+		 * `@路径` 纯文本。
+		 *
+		 * 判据很干净：胶囊在 detect 投影里只占 1 个字符（U+FFFC），所以「这段 mention 文字出现在
+		 * detect 文本里」本身就是「它是裸文本、不是胶囊」的证据。找到就按同一套坐标把那段文字换成胶囊。
+		 */
+
+		/** 从 labels 表倒着取最近插入的一批「标签 → mention」候选（重启后也能重建）。 */
+		function mentionCandidates() {
+			var cwd = sessionCwd();
+			var keys = [];
+			labels.forEach(function (path, label) {
+				keys.push({ label: label, path: path });
+			});
+			var out = [];
+			for (var i = keys.length - 1; i >= 0 && out.length < RESTORE_MAX_CANDIDATES; i -= 1) {
+				var entry = keys[i];
+				if (!IMAGE_EXT.test(entry.path) && !isFoldedName(entry.label)) continue;
+				var mention = mentionOf(relativize(entry.path, cwd));
+				if (mention === null) continue;
+				out.push({ label: entry.label, mention: mention });
+			}
+			return out;
+		}
+
+		/** 一轮检查：把第一处裸 mention 换成胶囊（改完 rev 会变，下一轮接着处理其它）。 */
+		function restoreBareMentions(shell) {
+			try {
+				var snap = snapshotOf(shell);
+				var rev = snap !== void 0 && snap !== null && typeof snap.draftRev === "number" ? snap.draftRev : null;
+				if (rev === null) return;
+				var projection = shell.projection;
+				var detect = projection !== null && projection !== void 0 && typeof projection.detectText === "string" ? projection.detectText : null;
+				if (detect === null || detect === "") return;
+				var candidates = mentionCandidates();
+				for (var i = 0; i < candidates.length; i += 1) {
+					var candidate = candidates[i];
+					var at = detect.indexOf(candidate.mention);
+					if (at < 0) continue;
+					/* 必须是完整的 mention token：前后不能还粘着别的路径字符（否则可能只截了一段）。 */
+					var before = at === 0 ? "" : detect.charAt(at - 1);
+					if (before !== "" && !/[\s(（[【,，、:：]/u.test(before)) continue;
+					var after = detect.charAt(at + candidate.mention.length);
+					if (after !== "" && !/[\s)）\]】,，。、;；:：]/u.test(after)) continue;
+					var applied = shell.insertReference(
+						{
+							source: "reference",
+							ref: candidate.mention,
+							label: candidate.label,
+							appearance: "file",
+							clipboardText: candidate.mention
+						},
+						{ draftRev: rev, start: at, end: at + candidate.mention.length }
+					);
+					if (applied === true) return;
+				}
+			} catch (error) {
+				/* 观察者不许影响编辑 */
+			}
+		}
+
+		/** 草稿一变就（防抖地）检查一次；暂停期间不动，免得跟输入法/播放动画打架。 */
+		var restoreTimer = null;
+		var restoreObserver = null;
+
+		function scheduleRestore() {
+			if (restoreTimer !== null) return;
+			restoreTimer = setTimeout(function () {
+				restoreTimer = null;
+				var shell = resolveShell();
+				if (shell !== null) restoreBareMentions(shell);
+			}, RESTORE_DEBOUNCE_MS);
+		}
+
 		/** 📎 文件选择器：change 也是同一个 addFiles 入口，同样处理。 */
 		function onChange(event) {
 			try {
@@ -1096,6 +1177,13 @@ window.__ModuleLoader__.load({
 				document.addEventListener("click", onClick, true);
 				window.addEventListener("scroll", onScroll, true);
 				document.addEventListener("keydown", onKeydown, true);
+				/* 草稿一变就可能出现「裸 @图片路径」（回退对话、恢复草稿的典型结果）：盯 DOM 变动，
+				   防抖之后把那处文字换回胶囊。固定间隔触发（不重置计时器），连续打字也不会饿死它。 */
+				if (typeof MutationObserver === "function" && typeof document.body !== "undefined" && document.body !== null) {
+					restoreObserver = new MutationObserver(scheduleRestore);
+					restoreObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+					scheduleRestore();
+				}
 				return function () {
 					document.removeEventListener("drop", onDrop, true);
 					document.removeEventListener("paste", onPaste, true);
@@ -1105,6 +1193,14 @@ window.__ModuleLoader__.load({
 					document.removeEventListener("click", onClick, true);
 					window.removeEventListener("scroll", onScroll, true);
 					document.removeEventListener("keydown", onKeydown, true);
+					if (restoreObserver !== null) {
+						restoreObserver.disconnect();
+						restoreObserver = null;
+					}
+					if (restoreTimer !== null) {
+						clearTimeout(restoreTimer);
+						restoreTimer = null;
+					}
 					hidePreview();
 					urls.forEach(function (url) {
 						try {

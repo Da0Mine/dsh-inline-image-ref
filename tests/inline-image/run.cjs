@@ -254,6 +254,23 @@ function check(name, ok, detail) {
   check("点击展开后浮层自己收掉", popoverAfterClick === null, popoverAfterClick && popoverAfterClick.count);
   await page.waitForTimeout(150);
 
+  console.log("[3l] 回退对话 / 恢复草稿后：裸的 @图片路径要自动变回胶囊");
+  await page.evaluate(() => {
+    window.__resetCalls();
+    /* 模拟 dsh-rewind-plugin 的恢复方式：草稿被写成纯文本（这里直接改官方投影里的 detect 文本） */
+    window.__setProjection([], "回退后的草稿：@D:\\pics\\a.png 结尾");
+    window.__touchComposer();
+  });
+  await page.waitForTimeout(800);
+  const restoredChips = await page.evaluate(() => window.__calls.chips);
+  check("裸路径被换回胶囊", restoredChips.length === 1 && restoredChips[0].ref.ref === "@D:\\pics\\a.png", restoredChips.map((c) => c.ref.ref));
+  check(
+    "替换范围正好覆盖那段 mention",
+    restoredChips.length === 1 && restoredChips[0].span.end - restoredChips[0].span.start === "@D:\\pics\\a.png".length,
+    restoredChips[0] && restoredChips[0].span
+  );
+  check("标签沿用了记过的名字", restoredChips.length === 1 && restoredChips[0].ref.label === "a.png", restoredChips[0] && restoredChips[0].ref.label);
+
   console.log("[4] 输入框里没有附件栏的迹象（插件不产原生附件）");
   const rails = await page.evaluate(() => document.querySelectorAll("[data-dsh-inline-image-preview]").length);
   check("初始没有浮层", rails === 0, rails);

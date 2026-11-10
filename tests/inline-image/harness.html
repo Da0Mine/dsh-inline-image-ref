@@ -205,6 +205,13 @@
   window.__setProjection = function (occurrences, detectText) {
     shellStub.projection = { occurrences: occurrences, detectText: detectText };
   };
+  /* 制造一次 DOM 变动，触发插件的草稿观察者（模拟回退后草稿被重写）。 */
+  window.__touchComposer = function () {
+    var input = document.querySelector("[data-composer-input]");
+    var marker = document.createElement("span");
+    marker.setAttribute("data-touch", String(Date.now()));
+    input.appendChild(marker);
+  };
   window.__labels = function () {
     try { return JSON.parse(window.localStorage.getItem("dsh-inline-image/labels/v1") || "null"); } catch (e) { return "unreadable"; }
   };
