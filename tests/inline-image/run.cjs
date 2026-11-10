@@ -249,10 +249,9 @@ function check(name, ok, detail) {
   const afterClick = await page.evaluate(() => window.__calls.texts);
   check("点击后把全文写回输入框", afterClick.length === 1 && afterClick[0].text.length === 4200, afterClick.map((t) => t.text.length));
   check("替换范围正好是那颗胶囊那 1 个字符", afterClick.length === 1 && afterClick[0].span.start === 0 && afterClick[0].span.end === 1, afterClick[0] && afterClick[0].span);
-  await page.evaluate((label) => {
-    const chip = document.querySelector('[data-composer-input] span[title="' + label + '"]');
-    if (chip !== null) chip.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
-  }, foldedLabel);
+  /* 胶囊被整颗换成文字后它再也收不到 mouseout —— 浮层必须由点击自己收掉（否则会挂在那儿关不掉）。 */
+  const popoverAfterClick = await page.evaluate(() => window.__preview());
+  check("点击展开后浮层自己收掉", popoverAfterClick === null, popoverAfterClick && popoverAfterClick.count);
   await page.waitForTimeout(150);
 
   console.log("[4] 输入框里没有附件栏的迹象（插件不产原生附件）");

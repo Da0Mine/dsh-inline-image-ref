@@ -694,6 +694,8 @@ window.__ModuleLoader__.load({
 				if (span === null) return;
 				if (shell.insertText(text, span) !== true) return;
 				textChips.delete(entry.label);
+				/* 胶囊节点被整颗换掉了，mouseout 再也不会派发到它身上 —— 这里必须自己收浮层。 */
+				hidePreview();
 			});
 		}
 
@@ -710,6 +712,8 @@ window.__ModuleLoader__.load({
 				if (shell === null) return;
 				event.preventDefault();
 				event.stopImmediatePropagation();
+				/* 先收浮层：展开是异步的（要读文件），而胶囊一旦被替换，它自己就再也收不到 mouseout 了。 */
+				hidePreview();
 				expandFoldedChip(entry, shell);
 			} catch (error) {
 				/* 点击不许出戏 */
