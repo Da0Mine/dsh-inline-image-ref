@@ -1,6 +1,6 @@
 {
   "name": "dsh-inline-image-ref",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "DSH 插件：把拖入/粘贴进输入框的图片当「文件」处理 —— 光标处插 @路径 胶囊（不占附件栏），悬停即可看原图。Images become @path chips at the caret with a hover preview.",
   "keywords": [
