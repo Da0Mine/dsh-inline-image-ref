@@ -709,6 +709,14 @@ window.__ModuleLoader__.load({
 			try {
 				var target = event.target;
 				if (!(target instanceof Element)) return;
+				/* 聊天区里我们自己装饰出来的胶囊：点击复制路径（官方那种「打开文件」的通道我们拿不到）。 */
+				var sentChip = target.closest("[" + DECORATE_ATTR + "]");
+				if (sentChip !== null && sentChip !== void 0) {
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					copyPath(sentChip);
+					return;
+				}
 				var chip = target.closest("[data-composer-chip]");
 				if (chip === null || chip === void 0) return;
 				if (!inPreviewZone(chip)) return;
@@ -831,7 +839,153 @@ window.__ModuleLoader__.load({
 				restoreTimer = null;
 				var shell = resolveShell();
 				if (shell !== null) restoreBareMentions(shell);
+				decorateSentMentions();
 			}, RESTORE_DEBOUNCE_MS);
+		}
+
+		/* ═════════ 第五件事：已发出消息里的裸 @路径 → 渲染成胶囊 ═════════
+		 *
+		 * 官方是否把消息里的 @路径 渲染成蓝色链接，取决于它自己那套「文件提及」解析；
+		 * %TEMP% 下这种插件自造的文件它不认，于是发出去就只剩纯文本。这里补一层装饰：
+		 * 认出指向我经手过的文件的 @路径 文字，包成胶囊 —— 悬停走已有预览（图看图、文看字），
+		 * 点击复制路径。只包我们认得的路径，且幂等（已经是胶囊就跳过）。
+		 */
+
+		/** 装饰出来的胶囊标记（同时也是 CSS/命中的钩子）。 */
+		var DECORATE_ATTR = "data-dsh-inline-image-chip";
+		/** 胶囊上记着真实绝对路径的属性。 */
+		var DECORATE_REF_ATTR = "data-dsh-inline-image-ref";
+		/** 消息里的 mention：带空白的走 @"…"，其余走 @path。 */
+		var SENT_MENTION_RE = /@(?:"([^"\n\r<>]{1,400})"|([^\s"'<>]{1,400}))/gu;
+		/** 绝对路径判定（Windows 盘符或 POSIX 根）。 */
+		var ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/)/u;
+
+		/** 把我记过的路径整理成「规范化路径 → 显示名」，用于反查 mention 指向哪儿。 */
+		function knownPathsByNormalized() {
+			var map = new Map();
+			labels.forEach(function (path, label) {
+				map.set(String(path).replace(/\\/gu, "/").toLowerCase(), label);
+			});
+			return map;
+		}
+
+		/** mention 里的路径 → 「我认得的绝对路径 + 显示名」；不认得就 null。 */
+		function resolveMentionPath(rawPath, cwd, known) {
+			if (typeof rawPath !== "string" || rawPath === "") return null;
+			var candidate = rawPath;
+			if (!ABSOLUTE_PATH_RE.test(candidate)) {
+				if (typeof cwd !== "string" || cwd === "") return null;
+				candidate = cwd.replace(/[/\\]+$/u, "") + "\\" + candidate.replace(/^[\\/]+/u, "");
+			}
+			var normalized = candidate.replace(/\\/gu, "/").toLowerCase();
+			var label = known.get(normalized);
+			if (label !== void 0) return { path: candidate, label: label };
+			/* 没记过、但一看就是我这类文件：仍然装饰出来（预览读得到就看，读不到会显示读不到）。 */
+			if (normalized.indexOf("/dsh-inline-image/") < 0) return null;
+			var base = candidate.replace(/[\s\S]*[\\/]/u, "");
+			if (!IMAGE_EXT.test(candidate) && !isFoldedName(base)) return null;
+			return { path: candidate, label: base };
+		}
+
+		/** 一个文本节点里的所有 mention → 一段新节点（不认得的原样留着）。 */
+		function decoratedFragment(text, cwd, known) {
+			SENT_MENTION_RE.lastIndex = 0;
+			var pieces = [];
+			var last = 0;
+			var match = SENT_MENTION_RE.exec(text);
+			var changed = false;
+			while (match !== null) {
+				var rawPath = typeof match[1] === "string" ? match[1] : match[2];
+				var hit = resolveMentionPath(rawPath, cwd, known);
+				if (hit !== null) {
+					if (match.index > last) pieces.push(document.createTextNode(text.slice(last, match.index)));
+					var chip = document.createElement("span");
+					chip.setAttribute(DECORATE_ATTR, "1");
+					chip.setAttribute(DECORATE_REF_ATTR, hit.path);
+					chip.setAttribute("title", hit.label);
+					chip.textContent = match[0];
+					pieces.push(chip);
+					last = match.index + match[0].length;
+					changed = true;
+				}
+				match = SENT_MENTION_RE.exec(text);
+			}
+			if (!changed) return null;
+			if (last < text.length) pieces.push(document.createTextNode(text.slice(last)));
+			var fragment = document.createDocumentFragment();
+			for (var i = 0; i < pieces.length; i += 1) fragment.appendChild(pieces[i]);
+			return fragment;
+		}
+
+		/** 扫一遍聊天区，把裸 mention 包成胶囊（React 重渲染后会再扫一遍，幂等）。 */
+		function decorateSentMentions() {
+			try {
+				if (typeof document === "undefined" || typeof document.createTreeWalker !== "function") return;
+				var zones = document.querySelectorAll("[data-chat-flow],[data-chat-turn]");
+				if (zones.length === 0) return;
+				var cwd = sessionCwd();
+				var known = knownPathsByNormalized();
+				var skipSelector = "[data-composer-card],[data-composer-input],pre,code,a,[data-composer-chip],[" + DECORATE_ATTR + "]";
+				for (var z = 0; z < zones.length; z += 1) {
+					var walker = document.createTreeWalker(zones[z], 4 /* SHOW_TEXT */, null);
+					var nodes = [];
+					var current = walker.nextNode();
+					while (current !== null) {
+						nodes.push(current);
+						current = walker.nextNode();
+					}
+					for (var i = 0; i < nodes.length; i += 1) {
+						var node = nodes[i];
+						var text = node.nodeValue;
+						if (typeof text !== "string" || text.indexOf("@") < 0) continue;
+						var parent = node.parentElement;
+						if (parent === null || parent === void 0) continue;
+						if (parent.closest(skipSelector) !== null) continue;
+						var fragment = decoratedFragment(text, cwd, known);
+						if (fragment === null) continue;
+						parent.replaceChild(fragment, node);
+						ensureChipStyle();
+					}
+				}
+			} catch (error) {
+				/* 装饰不许影响阅读 */
+			}
+		}
+
+		/** 点击装饰胶囊：把绝对路径复制到剪贴板，并在输入框上方给一句提示。 */
+		function copyPath(chip) {
+			var path = chip.getAttribute(DECORATE_REF_ATTR);
+			if (path === null || path === "") return;
+			var done = function () {
+				var shell = resolveShell();
+				if (shell !== null && typeof shell.notify === "function") shell.notify("info", "路径已复制：" + path);
+			};
+			try {
+				if (navigator.clipboard !== void 0 && typeof navigator.clipboard.writeText === "function") {
+					navigator.clipboard.writeText(path).then(done, done);
+					return;
+				}
+			} catch (error) {
+				/* 落到下面的兜底 */
+			}
+			done();
+		}
+
+		/** 装饰胶囊的样式（独立一张表，和预览浮层分开管）。 */
+		function ensureChipStyle() {
+			if (typeof document === "undefined") return;
+			var id = "dsh-inline-image/sent-chip.css";
+			if (document.querySelector('style[data-plugin-css="' + id + '"]') !== null) return;
+			var tag = document.createElement("style");
+			tag.dataset.plugin = "dsh-inline-image-ref";
+			tag.dataset.pluginCss = id;
+			tag.textContent = [
+				"[" + DECORATE_ATTR + "]{display:inline-block;max-width:100%;padding:0 6px;margin:0 1px;border-radius:6px;",
+				"background:rgba(77,147,248,.16);color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
+				"font:inherit;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:baseline;}",
+				"[" + DECORATE_ATTR + "]:hover{background:rgba(77,147,248,.26);}"
+			].join("");
+			document.head.appendChild(tag);
 		}
 
 		/** 📎 文件选择器：change 也是同一个 addFiles 入口，同样处理。 */
@@ -1048,6 +1202,12 @@ window.__ModuleLoader__.load({
 		 *  3. 节点文本本身就是一个 @路径 → 发出去的消息里那颗蓝色链接是这种。
 		 */
 		function pathOfNode(node) {
+			/* 自己装饰出来的胶囊：路径与名字都写在属性上，最可靠，先认它。 */
+			var decorated = node.getAttribute(DECORATE_REF_ATTR);
+			if (decorated !== null && decorated !== "") {
+				var decoratedTitle = node.getAttribute("title");
+				return { path: decorated, label: decoratedTitle !== null && decoratedTitle !== "" ? decoratedTitle : labelForPath(decorated) };
+			}
 			var title = node.getAttribute("title");
 			if (title !== null && title !== "") {
 				if (labels.has(title)) return { path: labels.get(title), label: title };
@@ -1084,10 +1244,10 @@ window.__ModuleLoader__.load({
 							break;
 						}
 					}
-					/* 转录区放宽一点：那边的链接可能是 div/span 包着图标，只要是叶子节点且整段就是一个
-					   引用就认（这正是用户要的「发出去的消息里也能看」）。输入框里则只认胶囊标记。 */
+					/* 转录区放宽一点：那边的链接可能是 div/span 包着图标，甚至包着我们自己装饰出来的胶囊，
+					   所以只要「整段文字就是一个引用」就认（正文比一段 mention 长，不会误伤）。 */
 					var inTranscript = node.closest("[data-chat-turn],[data-chat-flow]") !== null;
-					if (node.childElementCount === 0 && (INLINE_TAGS[node.tagName] === true || inTranscript)) {
+					if ((node.childElementCount === 0 && INLINE_TAGS[node.tagName] === true) || inTranscript) {
 						found = pathOfNode(node);
 						if (found !== null) break;
 					}
@@ -1202,6 +1362,8 @@ window.__ModuleLoader__.load({
 						restoreTimer = null;
 					}
 					hidePreview();
+					var chipStyle = document.querySelector('style[data-plugin-css="dsh-inline-image/sent-chip.css"]');
+					if (chipStyle !== null && chipStyle.parentNode !== null) chipStyle.parentNode.removeChild(chipStyle);
 					urls.forEach(function (url) {
 						try {
 							URL.revokeObjectURL(url);

@@ -420,6 +420,34 @@ function check(name, ok, detail) {
   check("认路径形式的 title", byTitle !== null && byTitle.hasImage === true, byTitle && byTitle.src ? "ok" : byTitle);
   check("读的就是那个路径", JSON.stringify(titleReads[0] && titleReads[0].path) === JSON.stringify("D:\\pics\\c.png"), titleReads);
 
+  console.log("[9e] 发出去后只剩纯文本的 @路径 → 插件自己把它渲染成胶囊");
+  await page.waitForTimeout(600);
+  const decorated = await page.evaluate(() => {
+    const bubble = document.querySelector(".LOmM4q_plainText");
+    const chip = bubble ? bubble.querySelector("[data-dsh-inline-image-chip]") : null;
+    return {
+      hasChip: chip !== null,
+      ref: chip ? chip.getAttribute("data-dsh-inline-image-ref") : null,
+      title: chip ? chip.getAttribute("title") : null,
+      bubbleText: bubble ? bubble.textContent : null
+    };
+  });
+  check("裸 mention 被包成胶囊", decorated.hasChip === true, decorated.hasChip);
+  check("胶囊上记着真实路径与显示名", decorated.ref === "D:\\pics\\a.png" && decorated.title === "a.png", decorated);
+  check("周边文字没被吞", decorated.bubbleText === "回退后写的：@D:\\pics\\a.png 就这一张", decorated.bubbleText);
+  await page.evaluate(() => {
+    const chip = document.querySelector(".LOmM4q_plainText [data-dsh-inline-image-chip]");
+    if (chip !== null) chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+  });
+  await page.waitForTimeout(300);
+  const decoratedPreview = await page.evaluate(() => window.__preview());
+  check("悬停装饰胶囊能出图", decoratedPreview !== null && decoratedPreview.hasImage === true, decoratedPreview && decoratedPreview.src ? "ok" : decoratedPreview);
+  await page.evaluate(() => {
+    const chip = document.querySelector(".LOmM4q_plainText [data-dsh-inline-image-chip]");
+    if (chip !== null) chip.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  });
+  await page.waitForTimeout(120);
+
   console.log("[9d] 把 Remote 通道抽掉：fail-open，只显示读不到");
   const killed = await page.evaluate(async () => {
     window.__killRemote();
