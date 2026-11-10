@@ -228,51 +228,78 @@ if (!npmOnly) {
   }
   record("fork 就绪", ready, FORK);
 
+  /* 先看有没有我们自己还没合并的投稿 PR：有就更新它那条分支，别再开一个。
+     市场条目本身不分版本，每次发版都新开 PR 只会堆重复（2026-11-10 踩过：#13527 旁边又冒出 #13925）。 */
+  let targetBranch = branch;
+  let reusePr = null;
+  const openPrs = api("GET", "/repos/" + MARKET_UPSTREAM + "/pulls?state=open&per_page=100");
+  if (Array.isArray(openPrs.body)) {
+    for (const pr of openPrs.body) {
+      const label = typeof pr.head?.label === "string" ? pr.head.label : "";
+      if (!label.startsWith(OWNER + ":")) continue;
+      const files = api("GET", "/repos/" + MARKET_UPSTREAM + "/pulls/" + pr.number + "/files?per_page=100");
+      if (Array.isArray(files.body) && files.body.some((f) => f.filename === ymlPath)) {
+        reusePr = pr;
+        targetBranch = pr.head.ref;
+        break;
+      }
+    }
+  }
+  if (reusePr !== null) record("复用既有投稿 PR", true, "#" + reusePr.number + " → " + targetBranch);
+
   /* 分支：从 upstream 的 ref 直接建（别 merge，unrelated histories） */
   const upstreamMain = api("GET", "/repos/" + MARKET_UPSTREAM + "/git/ref/heads/" + MARKET_BRANCH_BASE);
   const sha = upstreamMain.body?.object?.sha;
   record("读到 upstream head", Boolean(sha), sha ? sha.slice(0, 8) : "HTTP " + upstreamMain.status);
 
   if (ready && sha) {
-    /* 分支不存在才建；已存在（重新发版）就复用 */
-    const hasBranch = api("GET", "/repos/" + FORK + "/git/ref/heads/" + branch);
-    if (hasBranch.status !== 200) {
-      const made = api("POST", "/repos/" + FORK + "/git/refs", { ref: "refs/heads/" + branch, sha });
-      record("分支已建", made.status === 201 || made.status === 200 || made.status === 422, branch + " ← " + (made.status === 422 ? "已存在" : "ok"));
+    if (reusePr === null) {
+      /* 分支不存在才建；已存在（重新发版）就复用 */
+      const hasBranch = api("GET", "/repos/" + FORK + "/git/ref/heads/" + targetBranch);
+      if (hasBranch.status !== 200) {
+        const made = api("POST", "/repos/" + FORK + "/git/refs", { ref: "refs/heads/" + targetBranch, sha });
+        record("分支已建", made.status === 201 || made.status === 200 || made.status === 422, targetBranch + " ← " + (made.status === 422 ? "已存在" : "ok"));
+      } else {
+        record("分支已存在", true, targetBranch);
+      }
     } else {
-      record("分支已存在", true, branch);
+      record("分支沿用", true, targetBranch);
     }
 
     const putBody = {
       message: "add " + OWNER + "/" + REPO + " v" + version,
       content: Buffer.from(yaml, "utf8").toString("base64"),
-      branch
+      branch: targetBranch
     };
     let put = api("PUT", "/repos/" + FORK + "/contents/" + ymlPath, putBody);
     if (put.status === 422) {
       /* 该分支上文件已存在：带 sha 再 PUT */
-      const existing = api("GET", "/repos/" + FORK + "/contents/" + ymlPath + "?ref=" + branch);
+      const existing = api("GET", "/repos/" + FORK + "/contents/" + ymlPath + "?ref=" + targetBranch);
       if (existing.status === 200) {
         put = api("PUT", "/repos/" + FORK + "/contents/" + ymlPath, { ...putBody, sha: existing.body?.sha });
       }
     }
     record("市场条目已提交", put.status === 200 || put.status === 201, "HTTP " + put.status + " " + ymlPath);
 
-    const pr = api("POST", "/repos/" + MARKET_UPSTREAM + "/pulls", {
-      head: OWNER + ":" + branch,
-      base: MARKET_BRANCH_BASE,
-      title: "Add " + OWNER + "/" + REPO + " (" + pkg.name + " v" + version + ")",
-      body:
-        "投稿 " + OWNER + "/" + REPO + "\n\n" +
-        "- npm: `" + pkg.name + "@" + version + "`\n" +
-        "- 插件类型：client 半边（composer 交互）+ host 半边（落盘路由）\n" +
-        "- " + DESCRIPTION_ZH + "\n"
-    });
-    record(
-      "PR",
-      pr.status === 201 || pr.status === 200,
-      pr.body?.html_url || "HTTP " + pr.status + " " + JSON.stringify(pr.body).slice(0, 200)
-    );
+    if (reusePr !== null) {
+      record("PR 已更新（未新建）", true, reusePr.html_url);
+    } else {
+      const pr = api("POST", "/repos/" + MARKET_UPSTREAM + "/pulls", {
+        head: OWNER + ":" + targetBranch,
+        base: MARKET_BRANCH_BASE,
+        title: "Add " + OWNER + "/" + REPO + " (" + pkg.name + " v" + version + ")",
+        body:
+          "投稿 " + OWNER + "/" + REPO + "\n\n" +
+          "- npm: `" + pkg.name + "@" + version + "`\n" +
+          "- 插件类型：client 半边（composer 交互）+ host 半边（落盘路由）\n" +
+          "- " + DESCRIPTION_ZH + "\n"
+      });
+      record(
+        "PR",
+        pr.status === 201 || pr.status === 200,
+        pr.body?.html_url || "HTTP " + pr.status + " " + JSON.stringify(pr.body).slice(0, 200)
+      );
+    }
   }
 }
 
