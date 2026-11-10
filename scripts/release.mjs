@@ -229,11 +229,13 @@ if (!npmOnly) {
   record("fork 就绪", ready, FORK);
 
   /* 先看有没有我们自己还没合并的投稿 PR：有就更新它那条分支，别再开一个。
-     市场条目本身不分版本，每次发版都新开 PR 只会堆重复（2026-11-10 踩过：#13527 旁边又冒出 #13925）。 */
+     市场条目本身不分版本，每次发版都新开 PR 只会堆重复（2026-11-10 踩过两次：#13925、#13931）。
+     注意：这仓库一天几十个 PR，只看第一页会漏掉自己昨天提的那个，所以翻 4 页。 */
   let targetBranch = branch;
   let reusePr = null;
-  const openPrs = api("GET", "/repos/" + MARKET_UPSTREAM + "/pulls?state=open&per_page=100");
-  if (Array.isArray(openPrs.body)) {
+  for (let page = 1; page <= 4 && reusePr === null; page += 1) {
+    const openPrs = api("GET", "/repos/" + MARKET_UPSTREAM + "/pulls?state=open&per_page=100&page=" + page);
+    if (!Array.isArray(openPrs.body) || openPrs.body.length === 0) break;
     for (const pr of openPrs.body) {
       const label = typeof pr.head?.label === "string" ? pr.head.label : "";
       if (!label.startsWith(OWNER + ":")) continue;
