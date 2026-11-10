@@ -59,6 +59,8 @@
   /* 输入机的替身：只实现插件用到的那几样（读光标、插引用、挂附件）。 */
   var shellStub = {
     draft: "",
+    /* 官方投影的替身：胶囊在 detect 里各占 1 个 U+FFFC。测试用 __setProjection 注入。 */
+    projection: { detectText: "", occurrences: [] },
     state: {
       getSnapshot: function () {
         return { draft: shellStub.draft, draftRev: shellStub.draft.length + 1, phase: "plain" };
@@ -110,6 +112,19 @@
         return {
           readBytes: function (sessionId, path, options, signal) {
             window.__calls.readBytes.push({ sessionId: sessionId, path: path });
+            /* 文本文件返回文本字节（供「悬停看文字 / 点击变回文字」用），其余返回那张 PNG。 */
+            if (/\.(md|markdown|txt|log|json|ya?ml|csv)$/iu.test(String(path))) {
+              return Promise.resolve({
+                ok: true,
+                value: {
+                  data: new TextEncoder().encode(window.__textFileContent || ""),
+                  offset: 0,
+                  eof: true,
+                  absolutePath: path,
+                  version: "v1"
+                }
+              });
+            }
             return Promise.resolve({ ok: true, value: { data: pngBytes(), offset: 0, eof: true, absolutePath: path, version: "v1" } });
           }
         };
@@ -174,14 +189,21 @@
     if (nodes.length === 0) return null;
     var popover = nodes[0];
     var image = popover.querySelector("img");
+    var pre = popover.querySelector("pre[data-dsh-inline-image-text]");
     var caption = popover.querySelector("[data-dsh-inline-image-caption]");
     return {
       count: nodes.length,
       hasImage: image !== null,
       src: image === null ? null : image.getAttribute("src"),
+      hasText: pre !== null,
+      text: pre === null ? null : pre.textContent,
       caption: caption === null ? null : caption.textContent,
       left: Math.round(popover.getBoundingClientRect().left)
     };
+  };
+  /* 注入官方投影的替身：detectText（胶囊=U+FFFC）+ occurrences（clipboard 坐标）。 */
+  window.__setProjection = function (occurrences, detectText) {
+    shellStub.projection = { occurrences: occurrences, detectText: detectText };
   };
   window.__labels = function () {
     try { return JSON.parse(window.localStorage.getItem("dsh-inline-image/labels/v1") || "null"); } catch (e) { return "unreadable"; }

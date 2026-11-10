@@ -199,6 +199,62 @@ function check(name, ok, detail) {
   check("不接管", nonImage.prevented !== true, nonImage.prevented);
   check("没有插入动作", (await page.evaluate(() => window.__calls.chips.length)) === 0);
 
+  console.log("[3i] 长文本粘贴（≥4000 字）→ 折成 .md 文件引用，而不是把几千字塞进输入框");
+  const longPaste = await page.evaluate(() => {
+    window.__resetCalls();
+    const text = "长".repeat(4200);
+    window.__textFileContent = text;
+    const result = window.__paste([], text);
+    return { prevented: result.prevented, chars: text.length };
+  });
+  await page.waitForTimeout(400);
+  const folded = await page.evaluate(() => ({ saves: window.__calls.saves, chips: window.__calls.chips, texts: window.__calls.texts }));
+  check("接管了这次长文本粘贴", longPaste.prevented === true, longPaste.prevented);
+  check("落成一个 .md（名字 pasted-text-1.md）", folded.saves.length === 1 && /name=pasted-text-1\.md/u.test(folded.saves[0].url), folded.saves.map((s) => s.url));
+  check("按图片那套插了一颗引用胶囊", folded.chips.length === 1 && String(folded.chips[0].ref.ref).indexOf("pasted-text-1") >= 0, folded.chips.map((c) => c.ref.ref));
+  check("输入框里没多出这 4200 字", folded.texts.length === 0, folded.texts.length);
+
+  console.log("[3j] 悬停那颗胶囊 → 显示文件里的文字");
+  const foldedLabel = folded.chips.length > 0 ? folded.chips[0].ref.label : "";
+  const foldedMention = folded.chips.length > 0 ? folded.chips[0].ref.ref : "";
+  await page.evaluate((label) => {
+    const input = document.querySelector("[data-composer-input]");
+    const chip = document.createElement("span");
+    chip.setAttribute("data-composer-chip", "reference");
+    chip.className = "_6XhDDa_reference";
+    chip.setAttribute("title", label);
+    input.appendChild(chip);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+  }, foldedLabel);
+  await page.waitForTimeout(300);
+  const textPreview = await page.evaluate(() => window.__preview());
+  check("浮层显示的是文字而不是图", textPreview !== null && textPreview.hasText === true && textPreview.hasImage === false, textPreview && { hasText: textPreview.hasText, hasImage: textPreview.hasImage });
+  check("文字内容对得上", textPreview !== null && String(textPreview.text).indexOf("长长长") === 0, textPreview && String(textPreview.text).slice(0, 6));
+  check("标题标出总字数", textPreview !== null && /4200 字/u.test(String(textPreview.caption)), textPreview && textPreview.caption);
+
+  console.log("[3k] 点击那颗胶囊 → 把文件内容写回输入框（胶囊消失，回到纯文字）");
+  await page.evaluate(() => window.__resetCalls());
+  await page.evaluate(
+    (payload) => {
+      window.__setProjection(
+        [{ source: "reference", ref: payload.mention, label: payload.label, offset: 0, length: payload.mention.length }],
+        "\uFFFC"
+      );
+      const chip = document.querySelector('[data-composer-input] span[title="' + payload.label + '"]');
+      chip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    },
+    { label: foldedLabel, mention: foldedMention }
+  );
+  await page.waitForTimeout(300);
+  const afterClick = await page.evaluate(() => window.__calls.texts);
+  check("点击后把全文写回输入框", afterClick.length === 1 && afterClick[0].text.length === 4200, afterClick.map((t) => t.text.length));
+  check("替换范围正好是那颗胶囊那 1 个字符", afterClick.length === 1 && afterClick[0].span.start === 0 && afterClick[0].span.end === 1, afterClick[0] && afterClick[0].span);
+  await page.evaluate((label) => {
+    const chip = document.querySelector('[data-composer-input] span[title="' + label + '"]');
+    if (chip !== null) chip.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  }, foldedLabel);
+  await page.waitForTimeout(150);
+
   console.log("[4] 输入框里没有附件栏的迹象（插件不产原生附件）");
   const rails = await page.evaluate(() => document.querySelectorAll("[data-dsh-inline-image-preview]").length);
   check("初始没有浮层", rails === 0, rails);

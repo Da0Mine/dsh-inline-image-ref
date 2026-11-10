@@ -155,13 +155,13 @@ moduleExports.apply({
   get() { return undefined }
 })
 check('挂上了 drop/paste/change/mouseover/mouseout/keydown', () => {
-  for (const type of ['drop', 'paste', 'change', 'mouseover', 'mouseout', 'keydown']) {
+  for (const type of ['drop', 'paste', 'change', 'mouseover', 'mouseout', 'keydown', 'click']) {
     assert.ok((listeners.get(type) ?? 0) > 0, type)
   }
 })
 for (const dispose of disposers.reverse()) if (typeof dispose === 'function') dispose()
 check('dispose 之后全部摘干净', () => {
-  for (const type of ['drop', 'paste', 'change', 'mouseover', 'mouseout', 'keydown']) {
+  for (const type of ['drop', 'paste', 'change', 'mouseover', 'mouseout', 'keydown', 'click']) {
     assert.ok((listeners.get(type) ?? 0) === 0, type)
   }
 })

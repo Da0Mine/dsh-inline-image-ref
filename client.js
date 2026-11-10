@@ -59,6 +59,14 @@ window.__ModuleLoader__.load({
 		var PREVIEW_ATTR = "data-dsh-inline-image-preview";
 		/** 宿主落盘路由（没有 OS 路径的图片走它：先存成文件，才能变成 @路径 引用）。 */
 		var SAVE_URL = "/dsh-inline-image/save";
+		/** 长文本粘贴阈值（字符数）：达到就折成 .md 文件引用，而不是把几千字塞进输入框。 */
+		var TEXT_FOLD_CHARS = 4000;
+		/** 文本预览里最多显示多少字（多了在浮层里滚，别一次渲染几万字）。 */
+		var TEXT_PREVIEW_CHARS = 1500;
+		/** 文本预览浮层宽度（图片那套是 320）。 */
+		var TEXT_PREVIEW_MAX = 460;
+		/** 文本预览里 <pre> 的标记属性。 */
+		var TEXT_ATTR = "data-dsh-inline-image-text";
 
 		/** 插件级状态：当前会话 id（由 dock 槽的桥组件写入）与宿主 ctx。 */
 		var bridge = { ctx: null, sessionId: "" };
@@ -423,15 +431,25 @@ window.__ModuleLoader__.load({
 					text = "";
 				}
 				if (files.length === 0) {
-					/* 纯文字粘贴：如果里面带着图片的 @路径（典型场景就是「全选复制自己的草稿再粘回来」），
-					   官方只会把它当文字塞进去 —— 胶囊就退化成路径符号了。这里自己拼回去。 */
+					/* 纯文字粘贴，两条自己接管的路径：
+					   ① 里面带着图片的 @路径（典型场景：「全选复制自己的草稿再粘回来」）→ 自己拼回胶囊；
+					   ② 长文本（≥ TEXT_FOLD_CHARS）→ 折成 .md 文件引用，而不是把几千字塞进输入框。 */
 					var plan = planTextPaste(text);
-					if (plan === null) return;
-					var shellForText = resolveShell();
-					if (shellForText === null) return;
-					event.preventDefault();
-					event.stopImmediatePropagation();
-					insertParts(shellForText, plan);
+					if (plan !== null) {
+						var shellForText = resolveShell();
+						if (shellForText === null) return;
+						event.preventDefault();
+						event.stopImmediatePropagation();
+						insertParts(shellForText, plan);
+						return;
+					}
+					if (text.length >= TEXT_FOLD_CHARS) {
+						var shellForFold = resolveShell();
+						if (shellForFold === null) return;
+						event.preventDefault();
+						event.stopImmediatePropagation();
+						foldTextToChip(shellForFold, text);
+					}
 					return;
 				}
 				if (!needsTakeover(files)) {
@@ -523,6 +541,210 @@ window.__ModuleLoader__.load({
 					clipboardText: part.mention
 				}, span);
 			}
+		}
+
+		/* ═════════ 第三件事：长文本粘贴 → 折成 .md 文件引用 ═════════
+		 *
+		 * 与「在输入框上方再画一条 chip」的做法不同：这里真的把这段文字落成文件，
+		 * 再按图片那套插一颗 @路径 引用胶囊 —— 于是它和图片走同一条链路：
+		 *   · 悬停 → 看里面的文字
+		 *   · 点击 → 把文件内容写回输入框，胶囊消失（回到纯文本）
+		 */
+
+		/** 折叠文件名（宿主按内容寻址会加 -<sha16>，所以那一段是可选的）。 */
+		var FOLDED_NAME_RE = /^pasted-text-\d+(?:-[0-9a-f]{16})?\.(?:md|markdown|txt|log|json|ya?ml|csv)$/iu;
+		/** 文本内容缓存（悬停、点击都要用）。 */
+		var textCache = new Map();
+		/** 显示名 → { mention, path, text }：本会话折出来的那几颗。 */
+		var textChips = new Map();
+		/** 折叠文件名计数器。 */
+		var textSeq = 0;
+
+		/** 是不是我们折出来的那颗（页面重载后 textChips 会空，所以还要认文件名）。 */
+		function isFoldedName(label) {
+			return FOLDED_NAME_RE.test(String(label === null || label === void 0 ? "" : label));
+		}
+
+		function snapshotOf(shell) {
+			try {
+				return shell.state !== void 0 && shell.state !== null && typeof shell.state.getSnapshot === "function"
+					? shell.state.getSnapshot()
+					: shell.snapshot;
+			} catch (error) {
+				return void 0;
+			}
+		}
+
+		/**
+		 * 把一段长文本落成 .md 文件，再在光标处插一颗引用胶囊。
+		 * 落盘或插入失败就把原文写回光标处 —— 绝不让用户粘进来的东西消失。
+		 */
+		function foldTextToChip(shell, text) {
+			textSeq += 1;
+			var name = "pasted-text-" + textSeq + ".md";
+			var file = null;
+			try {
+				file = new File([text], name, { type: "text/markdown" });
+			} catch (error) {
+				file = null;
+			}
+			if (file === null) {
+				var direct = caretSpanOf(shell);
+				if (direct !== null) shell.insertText(text, direct);
+				return;
+			}
+			saveBytes(file).then(function (saved) {
+				var path = saved !== null && saved !== void 0 && typeof saved.path === "string" ? saved.path : null;
+				var label = saved !== null && saved !== void 0 && typeof saved.name === "string" && saved.name !== "" ? saved.name : name;
+				var span = caretSpanOf(shell);
+				if (path === null) {
+					if (span !== null) shell.insertText(text, span);
+					return;
+				}
+				remember(label, path);
+				textCache.set(path, text);
+				var mention = mentionOf(relativize(path, sessionCwd()));
+				if (mention === null || !insertChip(shell, label, mention)) {
+					var back = caretSpanOf(shell);
+					if (back !== null) shell.insertText(text, back);
+					return;
+				}
+				textChips.set(label, { mention: mention, path: path, text: text });
+			});
+		}
+
+		/** 读文本文件内容：先查缓存，没有再走 Remote 读字节并 UTF-8 解码。 */
+		function readTextFor(path) {
+			if (textCache.has(path)) return Promise.resolve(textCache.get(path));
+			if (bridge.sessionId === "") return Promise.resolve(null);
+			var remote = remoteFace();
+			if (remote === null) return Promise.resolve(null);
+			return Promise.resolve(remote.readBytes(bridge.sessionId, path, {}, void 0))
+				.then(function (result) {
+					if (result === null || result === void 0 || result.ok !== true) return null;
+					var value = result.value || {};
+					var data = value.data;
+					var bytes = data instanceof Uint8Array ? data : data && data.buffer ? new Uint8Array(data) : null;
+					if (bytes === null || bytes.length === 0 || bytes.length > MAX_BYTES) return null;
+					var text = new TextDecoder("utf-8").decode(bytes);
+					textCache.set(path, text);
+					return text;
+				})
+				.catch(function () {
+					return null;
+				});
+		}
+
+		/** 一颗胶囊对应的折叠条目；认不出（不是我们折的）就返回 null。 */
+		function foldedEntryFor(chip) {
+			var label = chip.getAttribute("title");
+			if (label === null || label === "") label = String(chip.textContent || "").trim();
+			if (label === "") return null;
+			var known = textChips.get(label);
+			if (known !== void 0) return known;
+			if (!isFoldedName(label)) return null;
+			var path = labels.get(label);
+			if (path === void 0) return null;
+			return { mention: null, path: path, text: null, label: label };
+		}
+
+		/**
+		 * 找出那颗胶囊在 detect 坐标里的位置（胶囊在 detect 里只占 1 个字符）。
+		 *
+		 * 换算依据官方投影：每颗更早的胶囊在 clipboard 投影里占 `length` 个字符、在 detect 里占 1 个，
+		 * 所以第 k 颗的 detect 起点 = 它的 clipboard 偏移 − 前面所有胶囊的 (length − 1) 之和。
+		 * 用 clipboard 偏移直接当 detect 跨度，是第三方插件踩过的坑（第二颗起就静默失效）。
+		 */
+		function detectSpanOfEntry(shell, entry) {
+			var snap = snapshotOf(shell);
+			var rev = snap !== void 0 && snap !== null && typeof snap.draftRev === "number" ? snap.draftRev : null;
+			if (rev === null) return null;
+			var projection = shell.projection;
+			if (projection === null || projection === void 0) return null;
+			var occurrences = Array.isArray(projection.occurrences) ? projection.occurrences : null;
+			if (occurrences === null) return null;
+			var detect = typeof projection.detectText === "string" ? projection.detectText : null;
+			var delta = 0;
+			for (var i = 0; i < occurrences.length; i += 1) {
+				var occurrence = occurrences[i];
+				if (occurrence === null || occurrence === void 0) continue;
+				var offset = typeof occurrence.offset === "number" ? occurrence.offset : 0;
+				var length = typeof occurrence.length === "number" ? occurrence.length : 0;
+				var start = offset - delta;
+				var hit =
+					entry.mention !== null && entry.mention !== void 0
+						? occurrence.ref === entry.mention
+						: occurrence.label === entry.label;
+				if (hit === true) {
+					var end = start + 1;
+					/* 官方插胶囊时会补一个空格，展开时顺手吃掉，免得留下一颗孤零零的空格。 */
+					if (detect !== null && detect.slice(end, end + 1) === " ") end += 1;
+					return { draftRev: rev, start: start, end: end };
+				}
+				delta += Math.max(0, length - 1);
+			}
+			return null;
+		}
+
+		/** 点击折叠胶囊 → 把文件内容写回输入框（胶囊消失，回到纯文本）。 */
+		function expandFoldedChip(entry, shell) {
+			readTextFor(entry.path).then(function (text) {
+				if (typeof text !== "string" || text === "") return;
+				var span = detectSpanOfEntry(shell, entry);
+				if (span === null) return;
+				if (shell.insertText(text, span) !== true) return;
+				textChips.delete(entry.label);
+			});
+		}
+
+		function onClick(event) {
+			try {
+				var target = event.target;
+				if (!(target instanceof Element)) return;
+				var chip = target.closest("[data-composer-chip]");
+				if (chip === null || chip === void 0) return;
+				if (!inPreviewZone(chip)) return;
+				var entry = foldedEntryFor(chip);
+				if (entry === null) return;
+				var shell = resolveShell();
+				if (shell === null) return;
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				expandFoldedChip(entry, shell);
+			} catch (error) {
+				/* 点击不许出戏 */
+			}
+		}
+
+		/** 文本预览浮层：显示这段文字的开头（可滚，标出总字数）。 */
+		function showTextPreview(chip, path, label) {
+			hidePreview();
+			ensureStyle();
+			var mine = ++seq;
+			var popover = document.createElement("div");
+			popover.setAttribute(PREVIEW_ATTR, "");
+			popover.setAttribute(TEXT_ATTR, "");
+			var caption = document.createElement("div");
+			caption.setAttribute("data-dsh-inline-image-caption", "");
+			caption.textContent = "载入中… " + label;
+			popover.appendChild(caption);
+			document.body.appendChild(popover);
+			place(popover, chip, TEXT_PREVIEW_MAX);
+			shown = { chip: chip, popover: popover, path: path };
+			readTextFor(path).then(function (text) {
+				if (mine !== seq || shown === null || shown.popover !== popover) return;
+				if (typeof text !== "string") {
+					caption.textContent = "读不到这段文字：" + label;
+					return;
+				}
+				var pre = document.createElement("pre");
+				pre.setAttribute(TEXT_ATTR, "");
+				pre.textContent =
+					text.length > TEXT_PREVIEW_CHARS ? text.slice(0, TEXT_PREVIEW_CHARS) + "\n…（后面还有 " + (text.length - TEXT_PREVIEW_CHARS) + " 字）" : text;
+				popover.insertBefore(pre, caption);
+				caption.textContent = label + " · " + text.length + " 字";
+				place(popover, chip, TEXT_PREVIEW_MAX);
+			});
 		}
 
 		/** 📎 文件选择器：change 也是同一个 addFiles 入口，同样处理。 */
@@ -631,6 +853,9 @@ window.__ModuleLoader__.load({
 				"display:flex;flex-direction:column;gap:4px;",
 				"}",
 				"[" + PREVIEW_ATTR + "] img{display:block;max-width:" + PREVIEW_MAX + "px;max-height:" + PREVIEW_MAX + "px;border-radius:6px;object-fit:contain;}",
+				"[" + PREVIEW_ATTR + "][" + TEXT_ATTR + "]{max-width:" + TEXT_PREVIEW_MAX + "px;}",
+				"[" + PREVIEW_ATTR + "] pre[" + TEXT_ATTR + "]{margin:0;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word;",
+				"font:12px/1.5 ui-monospace,Consolas,'Cascadia Mono',monospace;color:var(--dsw-alias-label-primary,#e6e6ea);}",
 				"[" + PREVIEW_ATTR + "] [data-dsh-inline-image-caption]{max-width:" + PREVIEW_MAX + "px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
 			].join("");
 			document.head.appendChild(tag);
@@ -643,10 +868,13 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 贴着胶囊放：优先上方，上方空间不够就放下方，左右贴边钳制。 */
-		function place(popover, chip) {
+		function place(popover, chip, maxWidth) {
 			try {
 				var rect = chip.getBoundingClientRect();
-				var width = Math.min(PREVIEW_MAX + 12, Math.max(120, rect.width + 24));
+				var width =
+					typeof maxWidth === "number"
+						? Math.min(maxWidth + 12, Math.max(160, window.innerWidth - 24))
+						: Math.min(PREVIEW_MAX + 12, Math.max(120, rect.width + 24));
 				var left = Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8));
 				popover.style.left = Math.round(left) + "px";
 				popover.style.maxWidth = Math.round(width) + "px";
@@ -763,7 +991,8 @@ window.__ModuleLoader__.load({
 				}
 				if (found === null || node === null || node === void 0) return;
 				if (shown !== null && shown.chip === node) return;
-				showPreview(node, found.path, found.label);
+				if (IMAGE_EXT.test(found.path)) showPreview(node, found.path, found.label);
+				else if (isFoldedName(found.label)) showTextPreview(node, found.path, found.label);
 			} catch (error) {
 				/* 悬停不许出戏 */
 			}
@@ -841,6 +1070,7 @@ window.__ModuleLoader__.load({
 				document.addEventListener("change", onChange, true);
 				document.addEventListener("mouseover", onOver, true);
 				document.addEventListener("mouseout", onOut, true);
+				document.addEventListener("click", onClick, true);
 				window.addEventListener("scroll", onScroll, true);
 				document.addEventListener("keydown", onKeydown, true);
 				return function () {
@@ -849,6 +1079,7 @@ window.__ModuleLoader__.load({
 					document.removeEventListener("change", onChange, true);
 					document.removeEventListener("mouseover", onOver, true);
 					document.removeEventListener("mouseout", onOut, true);
+					document.removeEventListener("click", onClick, true);
 					window.removeEventListener("scroll", onScroll, true);
 					document.removeEventListener("keydown", onKeydown, true);
 					hidePreview();
