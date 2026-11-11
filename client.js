@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
 		/** 宿主落盘路由（没有 OS 路径的图片走它：先存成文件，才能变成 @路径 引用）。 */
 		var SAVE_URL = "/dsh-inline-image/save";
 		/** 长文本粘贴阈值（字符数）：达到就折成 .md 文件引用，而不是把几千字塞进输入框。 */
-		var TEXT_FOLD_CHARS = 4000;
+		var TEXT_FOLD_CHARS = 2000;
 		/** 文本预览里最多显示多少字（多了在浮层里滚，别一次渲染几万字）。 */
 		var TEXT_PREVIEW_CHARS = 1500;
 		/** 文本预览浮层宽度（图片那套是 320）。 */
@@ -439,7 +439,7 @@ window.__ModuleLoader__.load({
 				if (files.length === 0) {
 					/* 纯文字粘贴，两条自己接管的路径：
 					   ① 里面带着图片的 @路径（典型场景：「全选复制自己的草稿再粘回来」）→ 自己拼回胶囊；
-					   ② 长文本（≥ TEXT_FOLD_CHARS）→ 折成 .md 文件引用，而不是把几千字塞进输入框。 */
+					   ② 长文本（≥ TEXT_FOLD_CHARS，现为 2000 字符）→ 折成 .md 文件引用，而不是把几千字塞进输入框。 */
 					var plan = planTextPaste(text);
 					if (plan !== null) {
 						var shellForText = resolveShell();

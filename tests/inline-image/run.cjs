@@ -199,7 +199,7 @@ function check(name, ok, detail) {
   check("不接管", nonImage.prevented !== true, nonImage.prevented);
   check("没有插入动作", (await page.evaluate(() => window.__calls.chips.length)) === 0);
 
-  console.log("[3i] 长文本粘贴（≥4000 字）→ 折成 .md 文件引用，而不是把几千字塞进输入框");
+  console.log("[3i] 长文本粘贴（≥2000 字）→ 折成 .md 文件引用，而不是把几千字塞进输入框");
   const longPaste = await page.evaluate(() => {
     window.__resetCalls();
     const text = "长".repeat(4200);
@@ -213,6 +213,26 @@ function check(name, ok, detail) {
   check("落成一个 .md（名字 pasted-text-1.md）", folded.saves.length === 1 && /name=pasted-text-1\.md/u.test(folded.saves[0].url), folded.saves.map((s) => s.url));
   check("按图片那套插了一颗引用胶囊", folded.chips.length === 1 && String(folded.chips[0].ref.ref).indexOf("pasted-text-1") >= 0, folded.chips.map((c) => c.ref.ref));
   check("输入框里没多出这 4200 字", folded.texts.length === 0, folded.texts.length);
+
+  console.log("[3i2] 阈值边界：1999 字不折、2000 字折");
+  const belowThreshold = await page.evaluate(() => {
+    window.__resetCalls();
+    const text = "短".repeat(1999);
+    const result = window.__paste([], text);
+    return { prevented: result.prevented, saves: window.__calls.saves.length, chips: window.__calls.chips.length };
+  });
+  check("1999 字：不接管、不落盘", belowThreshold.prevented !== true && belowThreshold.saves === 0 && belowThreshold.chips === 0, belowThreshold);
+  const atThreshold = await page.evaluate(() => {
+    window.__resetCalls();
+    const text = "界".repeat(2000);
+    window.__textFileContent = text;
+    const result = window.__paste([], text);
+    return { prevented: result.prevented };
+  });
+  /* 落盘是异步的（fetch → 再插胶囊），这里必须等一拍再读数，否则会误判成「没插胶囊」。 */
+  await page.waitForTimeout(400);
+  const atThresholdCalls = await page.evaluate(() => ({ saves: window.__calls.saves.length, chips: window.__calls.chips.length }));
+  check("2000 字：正好折成文件", atThreshold.prevented === true && atThresholdCalls.saves === 1 && atThresholdCalls.chips === 1, { ...atThreshold, ...atThresholdCalls });
 
   console.log("[3j] 悬停那颗胶囊 → 显示文件里的文字");
   const foldedLabel = folded.chips.length > 0 ? folded.chips[0].ref.label : "";
