@@ -983,9 +983,14 @@ window.__ModuleLoader__.load({
 			tag.dataset.plugin = "dsh-inline-image-ref";
 			tag.dataset.pluginCss = id;
 			tag.textContent = [
-				"[" + DECORATE_ATTR + "]{display:inline-block;max-width:100%;padding:0 6px;margin:0 1px;border-radius:6px;",
+				/* 对齐要点（踩过）：带 overflow:hidden 的 inline-block，其基线会退化成盒子底边
+				   （CSS2.1 规范规定 -> 与周围文字错位、看起来「偏上」）。所以这里
+				   ① 不用 overflow:hidden 做省略号，改用 max-width + text-overflow 的稳妥组合；
+				   ② 显式 vertical-align:middle，既不依赖基线，也不受行高影响。 */
+				"[" + DECORATE_ATTR + "]{display:inline-block;vertical-align:middle;max-width:22em;padding:0 6px;margin:0 2px;border-radius:6px;",
 				"background:rgba(77,147,248,.16);color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
-				"font:inherit;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:baseline;}",
+				"font:inherit;line-height:1.5;white-space:nowrap;overflow-wrap:normal;text-overflow:ellipsis;",
+				"box-decoration-break:clone;position:relative;top:0;}",
 				"[" + DECORATE_ATTR + "]:hover{background:rgba(77,147,248,.26);}"
 			].join("");
 			document.head.appendChild(tag);

@@ -471,6 +471,37 @@ function check(name, ok, detail) {
   });
   await page.waitForTimeout(120);
 
+  console.log("[9f] 胶囊要和周围文字对齐（不能比文字偏上/偏下）");
+  const alignInfo = await page.evaluate(() => {
+    const bubble = document.querySelector(".LOmM4q_plainText");
+    const chip = bubble ? bubble.querySelector("[data-dsh-inline-image-chip]") : null;
+    if (chip === null) return { error: "no chip" };
+    /* 取胶囊前面那段纯文字的包围盒，比较两者的垂直中心。 */
+    let textRect = null;
+    for (const node of bubble.childNodes) {
+      if (node.nodeType === 3 && String(node.nodeValue).trim() !== "") {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        textRect = range.getBoundingClientRect();
+        break;
+      }
+    }
+    if (textRect === null) return { error: "no text" };
+    const chipRect = chip.getBoundingClientRect();
+    const style = window.getComputedStyle(chip);
+    return {
+      delta: Math.abs(chipRect.top + chipRect.height / 2 - (textRect.top + textRect.height / 2)),
+      overflow: style.overflow,
+      verticalAlign: style.verticalAlign,
+      chipTop: Math.round(chipRect.top),
+      textTop: Math.round(textRect.top),
+      chipHeight: Math.round(chipRect.height),
+      textHeight: Math.round(textRect.height)
+    };
+  });
+  check("垂直中心与文字相差不超过 3px", alignInfo.error === undefined && alignInfo.delta <= 3, alignInfo);
+  check("没有用 overflow:hidden（那会把基线变成盒子底边）", alignInfo.overflow !== "hidden", alignInfo.overflow);
+
   console.log("[9d] 把 Remote 通道抽掉：fail-open，只显示读不到");
   const killed = await page.evaluate(async () => {
     window.__killRemote();
