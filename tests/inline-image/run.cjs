@@ -493,14 +493,18 @@ function check(name, ok, detail) {
       delta: Math.abs(chipRect.top + chipRect.height / 2 - (textRect.top + textRect.height / 2)),
       overflow: style.overflow,
       verticalAlign: style.verticalAlign,
+      lineHeight: style.lineHeight,
+      parentLineHeight: window.getComputedStyle(bubble).lineHeight,
       chipTop: Math.round(chipRect.top),
       textTop: Math.round(textRect.top),
       chipHeight: Math.round(chipRect.height),
       textHeight: Math.round(textRect.height)
     };
   });
-  check("垂直中心与文字相差不超过 3px", alignInfo.error === undefined && alignInfo.delta <= 3, alignInfo);
+  check("垂直中心与文字相差不超过 2px", alignInfo.error === undefined && alignInfo.delta <= 2, alignInfo);
   check("没有用 overflow:hidden（那会把基线变成盒子底边）", alignInfo.overflow !== "hidden", alignInfo.overflow);
+  check("也没用 vertical-align:middle（那会让盒子往下方坠）", alignInfo.verticalAlign === "baseline", alignInfo.verticalAlign);
+  check("行高继承父级（盒子高度 = 行高）", alignInfo.lineHeight === alignInfo.parentLineHeight, { chip: alignInfo.lineHeight, parent: alignInfo.parentLineHeight });
 
   console.log("[9d] 把 Remote 通道抽掉：fail-open，只显示读不到");
   const killed = await page.evaluate(async () => {

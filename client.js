@@ -983,14 +983,15 @@ window.__ModuleLoader__.load({
 			tag.dataset.plugin = "dsh-inline-image-ref";
 			tag.dataset.pluginCss = id;
 			tag.textContent = [
-				/* 对齐要点（踩过）：带 overflow:hidden 的 inline-block，其基线会退化成盒子底边
-				   （CSS2.1 规范规定 -> 与周围文字错位、看起来「偏上」）。所以这里
-				   ① 不用 overflow:hidden 做省略号，改用 max-width + text-overflow 的稳妥组合；
-				   ② 显式 vertical-align:middle，既不依赖基线，也不受行高影响。 */
-				"[" + DECORATE_ATTR + "]{display:inline-block;vertical-align:middle;max-width:22em;padding:0 6px;margin:0 2px;border-radius:6px;",
+				/* 对齐要点（踩过两次）：
+				   ① 「inline-block + overflow:hidden」—— overflow 非 visible 时基线退化成盒子底边，胶囊明显偏上；
+				   ② 改成 vertical-align:middle 又偏下 —— middle 是「盒子中心对齐基线 + x高度一半」，
+				      盒子比文字行高一点点，多出来的部分全挂在下方，看着就往下坠。
+				   正解：overflow 保持 visible（此时 inline-block 的基线 = 盒内文字基线）+ vertical-align:baseline
+				   + line-height:inherit（盒子高度 = 父行高）。实测中心差 0px、上下对称。 */
+				"[" + DECORATE_ATTR + "]{display:inline-block;vertical-align:baseline;line-height:inherit;max-width:22em;padding:0 6px;margin:0 2px;border-radius:6px;",
 				"background:rgba(77,147,248,.16);color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
-				"font:inherit;line-height:1.5;white-space:nowrap;overflow-wrap:normal;text-overflow:ellipsis;",
-				"box-decoration-break:clone;position:relative;top:0;}",
+				"font:inherit;white-space:nowrap;overflow-wrap:normal;text-overflow:ellipsis;}",
 				"[" + DECORATE_ATTR + "]:hover{background:rgba(77,147,248,.26);}"
 			].join("");
 			document.head.appendChild(tag);
