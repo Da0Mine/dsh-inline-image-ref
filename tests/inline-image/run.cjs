@@ -449,12 +449,15 @@ function check(name, ok, detail) {
       hasChip: chip !== null,
       ref: chip ? chip.getAttribute("data-dsh-inline-image-ref") : null,
       title: chip ? chip.getAttribute("title") : null,
+      label: chip ? chip.getAttribute("aria-label") : null,
+      text: chip ? chip.textContent : null,
       bubbleText: bubble ? bubble.textContent : null
     };
   });
   check("裸 mention 被包成胶囊", decorated.hasChip === true, decorated.hasChip);
-  check("胶囊上记着真实路径与显示名", decorated.ref === "D:\\pics\\a.png" && decorated.title === "a.png", decorated);
-  check("周边文字没被吞", decorated.bubbleText === "回退后写的：@D:\\pics\\a.png 就这一张", decorated.bubbleText);
+  check("胶囊上记着真实路径与显示名", decorated.ref === "D:\\pics\\a.png" && decorated.label === "a.png" && decorated.title === "a.png\nD:\\pics\\a.png", decorated);
+  check("发出去只显示文件名，不铺满绝对路径", decorated.text === "a.png", decorated.text);
+  check("周边文字没被吞", decorated.bubbleText === "回退后写的：a.png 就这一张", decorated.bubbleText);
   await page.evaluate(() => {
     const chip = document.querySelector(".LOmM4q_plainText [data-dsh-inline-image-chip]");
     if (chip !== null) chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));

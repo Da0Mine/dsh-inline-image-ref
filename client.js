@@ -902,8 +902,11 @@ window.__ModuleLoader__.load({
 					var chip = document.createElement("span");
 					chip.setAttribute(DECORATE_ATTR, "1");
 					chip.setAttribute(DECORATE_REF_ATTR, hit.path);
-					chip.setAttribute("title", hit.label);
-					chip.textContent = match[0];
+					/* 显示名 + 完整路径都挂在属性上：屏幕上只显示文件名（和输入框里的胶囊一致），
+					   完整路径留给悬停提示与预览解析 —— 不要在消息里铺一大串 C:\...。 */
+					chip.setAttribute("title", hit.label + "\n" + hit.path);
+					chip.setAttribute("aria-label", hit.label);
+					chip.textContent = hit.label;
 					pieces.push(chip);
 					last = match.index + match[0].length;
 					changed = true;
@@ -1205,8 +1208,13 @@ window.__ModuleLoader__.load({
 			/* 自己装饰出来的胶囊：路径与名字都写在属性上，最可靠，先认它。 */
 			var decorated = node.getAttribute(DECORATE_REF_ATTR);
 			if (decorated !== null && decorated !== "") {
-				var decoratedTitle = node.getAttribute("title");
-				return { path: decorated, label: decoratedTitle !== null && decoratedTitle !== "" ? decoratedTitle : labelForPath(decorated) };
+				var decoratedLabel = node.getAttribute("aria-label");
+				if (decoratedLabel === null || decoratedLabel === "") {
+					/* 老样式：title 里第一行是显示名，后面可能跟着完整路径。 */
+					var decoratedTitle = node.getAttribute("title");
+					decoratedLabel = decoratedTitle !== null && decoratedTitle !== "" ? decoratedTitle.split("\n")[0] : "";
+				}
+				return { path: decorated, label: decoratedLabel !== "" ? decoratedLabel : labelForPath(decorated) };
 			}
 			var title = node.getAttribute("title");
 			if (title !== null && title !== "") {
