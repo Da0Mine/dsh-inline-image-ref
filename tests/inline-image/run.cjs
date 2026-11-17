@@ -551,7 +551,7 @@ function check(name, ok, detail) {
   check("出现了「展开全文」按钮", collapse.hasButton === true && collapse.buttonText === "展开全文", collapse.buttonText);
   check("短消息不折叠、也没按钮", collapse.shortCollapsed === false && collapse.shortMaxHeight === "" && collapse.shortHasButton === false, collapse);
 
-  console.log("[10b] 点「展开全文」→ 恢复全文，且不再被自动折叠");
+  console.log("[10b] 点「展开全文」→ 恢复全文，按钮变「收起」（还能折回去）");
   await page.evaluate(() => {
     const button = document.querySelector("[data-dsh-inline-image-expand]");
     button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -559,31 +559,66 @@ function check(name, ok, detail) {
   await page.waitForTimeout(150);
   const expanded = await page.evaluate(() => {
     const long = document.getElementById("longBubble");
+    const button = long.parentElement.querySelector("[data-dsh-inline-image-expand]");
     return {
       collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
       expandedFlag: long.getAttribute("data-dsh-inline-image-expanded") === "1",
       maxHeight: long.style.maxHeight,
-      hasButton: long.parentElement.querySelector("[data-dsh-inline-image-expand]") !== null,
+      hasButton: button !== null,
+      buttonText: button === null ? null : button.textContent,
       height: Math.round(long.getBoundingClientRect().height)
     };
   });
   check("展开后不再有高度限制", expanded.collapsed === false && expanded.maxHeight === "", expanded);
   check("记下了「用户已展开」", expanded.expandedFlag === true, expanded.expandedFlag);
-  check("按钮已移除", expanded.hasButton === false, expanded.hasButton);
+  check("按钮还在，文案变成「收起」", expanded.hasButton === true && expanded.buttonText === "收起", expanded.buttonText);
   check("高度恢复为全文", expanded.height > 150, expanded.height);
 
-  console.log("[10c] 再扫一轮（模拟 React 重渲染）→ 已展开的不被重新折叠");
+  console.log("[10c] 再扫一轮（模拟 React 重渲染）→ 已展开的不被重新折叠，按钮仍是「收起」");
   await page.evaluate(() => window.__touchComposer());
   await page.waitForTimeout(700);
   const afterRescan = await page.evaluate(() => {
     const long = document.getElementById("longBubble");
+    const button = long.parentElement.querySelector("[data-dsh-inline-image-expand]");
     return {
       collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
       maxHeight: long.style.maxHeight,
-      height: Math.round(long.getBoundingClientRect().height)
+      height: Math.round(long.getBoundingClientRect().height),
+      buttonText: button === null ? null : button.textContent
     };
   });
   check("重扫后仍然展开", afterRescan.collapsed === false && afterRescan.maxHeight === "", afterRescan);
+  check("重扫后按钮仍是「收起」", afterRescan.buttonText === "收起", afterRescan.buttonText);
+
+  console.log("[10d] 点「收起」→ 折回 5 行，按钮变回「展开全文」");
+  await page.evaluate(() => {
+    const button = document.querySelector("[data-dsh-inline-image-expand]");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await page.waitForTimeout(150);
+  const refolded = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    const button = long.parentElement.querySelector("[data-dsh-inline-image-expand]");
+    return {
+      collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
+      expandedFlag: long.getAttribute("data-dsh-inline-image-expanded") === "1",
+      maxHeight: long.style.maxHeight,
+      height: Math.round(long.getBoundingClientRect().height),
+      buttonText: button === null ? null : button.textContent
+    };
+  });
+  check("收起了，高度回到 5 行", refolded.collapsed === true && refolded.maxHeight === "100px" && refolded.height <= 105, refolded);
+  check("「已展开」标记被清掉", refolded.expandedFlag === false, refolded.expandedFlag);
+  check("按钮变回「展开全文」", refolded.buttonText === "展开全文", refolded.buttonText);
+
+  console.log("[10e] 收起后再扫一轮 → 保持折叠（不会自己弹开）");
+  await page.evaluate(() => window.__touchComposer());
+  await page.waitForTimeout(700);
+  const afterRefold = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    return { collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1", height: Math.round(long.getBoundingClientRect().height) };
+  });
+  check("重扫后仍是折叠态", afterRefold.collapsed === true && afterRefold.height <= 105, afterRefold);
 
   console.log("[11] 卸载干净");
   const cleaned = await page.evaluate(async () => {

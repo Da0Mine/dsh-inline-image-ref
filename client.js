@@ -709,12 +709,12 @@ window.__ModuleLoader__.load({
 			try {
 				var target = event.target;
 				if (!(target instanceof Element)) return;
-				/* 「展开全文」按钮：去掉高度限制，并记住这条消息已被展开。 */
+				/* 「展开全文 / 收起」按钮：双向切换（展开后按钮变「收起」，还能点回去）。 */
 				var expandButton = target.closest("[" + EXPAND_ATTR + "]");
 				if (expandButton !== null && expandButton !== void 0) {
 					event.preventDefault();
 					event.stopImmediatePropagation();
-					expandBubble(expandButton);
+					toggleBubble(expandButton);
 					return;
 				}
 				/* 聊天区里我们自己装饰出来的胶囊：点击复制路径（官方那种「打开文件」的通道我们拿不到）。 */
@@ -1020,6 +1020,8 @@ window.__ModuleLoader__.load({
 		var COLLAPSED_ATTR = "data-dsh-inline-image-collapsed";
 		/** 展开按钮的标记属性。 */
 		var EXPAND_ATTR = "data-dsh-inline-image-expand";
+		/** 用户手动展开过（此时保留全文，但按钮变「收起」，还能点回去）。 */
+		var EXPANDED_ATTR = "data-dsh-inline-image-expanded";
 
 		/** 找用户消息的正文气泡（不含我装饰出来的胶囊、不含附件卡片）。 */
 		function userBubblesIn(root) {
@@ -1057,49 +1059,59 @@ window.__ModuleLoader__.load({
 		function applyCollapse(bubble) {
 			try {
 				if (bubble === null || bubble === void 0) return;
-				/* 用户手动展开过就永久尊重（直到 React 重渲染换掉节点）。 */
-				if (bubble.getAttribute("data-dsh-inline-image-expanded") === "1") return;
+				var host = bubble.parentElement;
+				var button = host === null ? null : host.querySelector("[" + EXPAND_ATTR + "]");
 				var measured = visualLinesOf(bubble);
 				if (measured === null) return;
-				var shouldCollapse = measured.lines > COLLAPSE_LINES + 0.35;
-				var button = bubble.parentElement === null ? null : bubble.parentElement.querySelector("[" + EXPAND_ATTR + "]");
-				if (!shouldCollapse) {
+				var needsFold = measured.lines > COLLAPSE_LINES + 0.35;
+				/* 不够 5 行就不该有折叠痕迹，也不该留按钮。 */
+				if (!needsFold) {
 					bubble.removeAttribute(COLLAPSED_ATTR);
+					bubble.removeAttribute(EXPANDED_ATTR);
 					bubble.style.removeProperty("max-height");
 					bubble.style.removeProperty("overflow");
 					if (button !== null) button.parentNode.removeChild(button);
 					return;
 				}
-				var limit = Math.round(measured.lineHeight * COLLAPSE_LINES);
-				bubble.style.maxHeight = limit + "px";
-				bubble.style.overflow = "hidden";
-				bubble.setAttribute(COLLAPSED_ATTR, "1");
-				if (button === null) {
-					ensureCollapseStyle();
-					var host = bubble.parentElement;
-					if (host === null) return;
-					var created = document.createElement("button");
-					created.type = "button";
-					created.setAttribute(EXPAND_ATTR, "1");
-					created.textContent = "展开全文";
-					host.appendChild(created);
+				ensureCollapseStyle();
+				/* 用户手动展开过：保持全文，但按钮要留着（文案变「收起」），否则就回不去了。 */
+				var expanded = bubble.getAttribute(EXPANDED_ATTR) === "1";
+				if (expanded) {
+					bubble.removeAttribute(COLLAPSED_ATTR);
+					bubble.style.removeProperty("max-height");
+					bubble.style.removeProperty("overflow");
+				} else {
+					bubble.style.maxHeight = Math.round(measured.lineHeight * COLLAPSE_LINES) + "px";
+					bubble.style.overflow = "hidden";
+					bubble.setAttribute(COLLAPSED_ATTR, "1");
 				}
+				if (button === null) {
+					if (host === null) return;
+					button = document.createElement("button");
+					button.type = "button";
+					button.setAttribute(EXPAND_ATTR, "1");
+					host.appendChild(button);
+				}
+				var want = expanded ? "收起" : "展开全文";
+				if (button.textContent !== want) button.textContent = want;
 			} catch (error) {
 				/* 折叠失败就保持原样，别把消息弄没 */
 			}
 		}
 
-		/** 点「展开全文」：去掉高度限制，并记住这条消息已被用户展开。 */
-		function expandBubble(button) {
-			var host = button.parentElement;
-			if (host === null) return;
-			var bubble = host.querySelector("[class*=\"_bubble\"][" + COLLAPSED_ATTR + "]");
-			if (bubble === null) return;
-			bubble.removeAttribute(COLLAPSED_ATTR);
-			bubble.setAttribute("data-dsh-inline-image-expanded", "1");
-			bubble.style.removeProperty("max-height");
-			bubble.style.removeProperty("overflow");
-			button.parentNode.removeChild(button);
+		/** 点按钮：折叠 ↔ 展开 来回切（展开后按钮变「收起」，还能点回去）。 */
+		function toggleBubble(button) {
+			try {
+				var host = button.parentElement;
+				if (host === null) return;
+				var bubble = host.querySelector('[class*="_bubble"]');
+				if (bubble === null || bubble === void 0) return;
+				if (bubble.getAttribute(EXPANDED_ATTR) === "1") bubble.removeAttribute(EXPANDED_ATTR);
+				else bubble.setAttribute(EXPANDED_ATTR, "1");
+				applyCollapse(bubble);
+			} catch (error) {
+				/* 同上 */
+			}
 		}
 
 		/** 扫一遍聊天区，按当前宽度重新判定每条用户消息要不要折叠。 */
