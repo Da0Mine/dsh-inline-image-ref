@@ -1141,9 +1141,10 @@ window.__ModuleLoader__.load({
 				"[" + COLLAPSED_ATTR + "]{position:relative;}",
 				"[" + COLLAPSED_ATTR + "]::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2.2em;pointer-events:none;",
 				"background:linear-gradient(to bottom, transparent, var(--dsw-specific-bubble, var(--dsw-alias-bg-base, #1b1b1f)));}",
-				"[" + EXPAND_ATTR + "]{display:inline-flex;align-items:center;gap:4px;margin:2px 0 0;padding:2px 8px;border:none;border-radius:6px;",
+				/* 按钮贴左侧：右下角本来就有别的操作按钮，放右边容易误触（用户 2026-11-17 反馈）。 */
+				"[" + EXPAND_ATTR + "]{display:inline-flex;align-items:center;gap:4px;margin:2px auto 0 0;padding:2px 8px;border:none;border-radius:6px;",
 				"background:transparent;color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
-				"font:inherit;font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.6;align-self:flex-end;}",
+				"font:inherit;font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.6;align-self:flex-start;}",
 				"[" + EXPAND_ATTR + "]:hover{background:rgba(77,147,248,.12);}"
 			].join("");
 			document.head.appendChild(tag);

@@ -551,6 +551,24 @@ function check(name, ok, detail) {
   check("出现了「展开全文」按钮", collapse.hasButton === true && collapse.buttonText === "展开全文", collapse.buttonText);
   check("短消息不折叠、也没按钮", collapse.shortCollapsed === false && collapse.shortMaxHeight === "" && collapse.shortHasButton === false, collapse);
 
+  console.log("[10a] 按钮要靠左（右下角有别的操作按钮，放右边会误触）");
+  const buttonGeometry = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    const button = long.parentElement.querySelector("[data-dsh-inline-image-expand]");
+    const bubbleRect = long.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    return {
+      leftGap: Math.round(buttonRect.left - bubbleRect.left),
+      rightGap: Math.round(bubbleRect.right - buttonRect.right),
+      bubbleWidth: Math.round(bubbleRect.width),
+      buttonWidth: Math.round(buttonRect.width),
+      alignSelf: window.getComputedStyle(button).alignSelf
+    };
+  });
+  check("按钮贴着气泡左边（左侧间距 ≤ 8px）", buttonGeometry.leftGap <= 8, buttonGeometry);
+  check("按钮远离右侧（右侧留白显著更大）", buttonGeometry.rightGap > buttonGeometry.leftGap + 40, buttonGeometry);
+  check("align-self 是 flex-start", buttonGeometry.alignSelf === "flex-start", buttonGeometry.alignSelf);
+
   console.log("[10b] 点「展开全文」→ 恢复全文，按钮变「收起」（还能折回去）");
   await page.evaluate(() => {
     const button = document.querySelector("[data-dsh-inline-image-expand]");
