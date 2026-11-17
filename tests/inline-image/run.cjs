@@ -526,7 +526,66 @@ function check(name, ok, detail) {
   check("没有 img，只给出「读不到」的说明", degraded !== null && degraded.hasImage === false && /读不到/.test(String(degraded.caption)), degraded);
   check("抽掉 Remote 后没炸", errors.length === 0, errors.slice(0, 3));
 
-  console.log("[10] 卸载干净");
+  console.log("[10] 用户消息超过 5 行 → 自动折叠，短消息不动");
+  await page.evaluate(() => window.__touchComposer());
+  await page.waitForTimeout(700);
+  const collapse = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    const short = document.getElementById("shortBubble");
+    const longButton = long.parentElement.querySelector("[data-dsh-inline-image-expand]");
+    return {
+      longCollapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
+      longMaxHeight: long.style.maxHeight,
+      longHeight: Math.round(long.getBoundingClientRect().height),
+      longFullHeight: long.scrollHeight,
+      hasButton: longButton !== null,
+      buttonText: longButton ? longButton.textContent : null,
+      shortCollapsed: short.getAttribute("data-dsh-inline-image-collapsed") === "1",
+      shortMaxHeight: short.style.maxHeight,
+      shortHasButton: short.parentElement.querySelector("[data-dsh-inline-image-expand]") !== null
+    };
+  });
+  check("长消息被折叠了", collapse.longCollapsed === true, collapse);
+  check("折叠高度 = 5 行（20px 行高 → 100px）", collapse.longMaxHeight === "100px", collapse.longMaxHeight);
+  check("实际高度被压到 5 行", collapse.longHeight <= 105 && collapse.longHeight < collapse.longFullHeight, { shown: collapse.longHeight, full: collapse.longFullHeight });
+  check("出现了「展开全文」按钮", collapse.hasButton === true && collapse.buttonText === "展开全文", collapse.buttonText);
+  check("短消息不折叠、也没按钮", collapse.shortCollapsed === false && collapse.shortMaxHeight === "" && collapse.shortHasButton === false, collapse);
+
+  console.log("[10b] 点「展开全文」→ 恢复全文，且不再被自动折叠");
+  await page.evaluate(() => {
+    const button = document.querySelector("[data-dsh-inline-image-expand]");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await page.waitForTimeout(150);
+  const expanded = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    return {
+      collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
+      expandedFlag: long.getAttribute("data-dsh-inline-image-expanded") === "1",
+      maxHeight: long.style.maxHeight,
+      hasButton: long.parentElement.querySelector("[data-dsh-inline-image-expand]") !== null,
+      height: Math.round(long.getBoundingClientRect().height)
+    };
+  });
+  check("展开后不再有高度限制", expanded.collapsed === false && expanded.maxHeight === "", expanded);
+  check("记下了「用户已展开」", expanded.expandedFlag === true, expanded.expandedFlag);
+  check("按钮已移除", expanded.hasButton === false, expanded.hasButton);
+  check("高度恢复为全文", expanded.height > 150, expanded.height);
+
+  console.log("[10c] 再扫一轮（模拟 React 重渲染）→ 已展开的不被重新折叠");
+  await page.evaluate(() => window.__touchComposer());
+  await page.waitForTimeout(700);
+  const afterRescan = await page.evaluate(() => {
+    const long = document.getElementById("longBubble");
+    return {
+      collapsed: long.getAttribute("data-dsh-inline-image-collapsed") === "1",
+      maxHeight: long.style.maxHeight,
+      height: Math.round(long.getBoundingClientRect().height)
+    };
+  });
+  check("重扫后仍然展开", afterRescan.collapsed === false && afterRescan.maxHeight === "", afterRescan);
+
+  console.log("[11] 卸载干净");
   const cleaned = await page.evaluate(async () => {
     for (const dispose of window.__disposers) if (typeof dispose === "function") dispose();
     const chip = document.querySelector("[data-composer-input] span[title='a.png']");

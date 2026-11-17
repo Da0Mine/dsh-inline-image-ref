@@ -32,6 +32,22 @@
         <span class="LOmM4q_plainText">回退后写的：@D:\pics\a.png 就这一张</span>
       </div>
     </div>
+
+    <!-- 折叠：用户消息超过 5 行 → 折叠；短消息不动。用 userRow/userStack/bubble 的真实类名形态 -->
+    <div data-chat-turn="2">
+      <div class="LOmM4q_userRow">
+        <div class="LOmM4q_userStack">
+          <div class="LOmM4q_bubble" id="longBubble" style="line-height:20px;width:400px;">第一行<br>第二行<br>第三行<br>第四行<br>第五行<br>第六行<br>第七行<br>第八行<br>第九行</div>
+        </div>
+      </div>
+    </div>
+    <div data-chat-turn="3">
+      <div class="LOmM4q_userRow">
+        <div class="LOmM4q_userStack">
+          <div class="LOmM4q_bubble" id="shortBubble" style="line-height:20px;width:400px;">只有两行<br>第二行</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -709,6 +709,14 @@ window.__ModuleLoader__.load({
 			try {
 				var target = event.target;
 				if (!(target instanceof Element)) return;
+				/* 「展开全文」按钮：去掉高度限制，并记住这条消息已被展开。 */
+				var expandButton = target.closest("[" + EXPAND_ATTR + "]");
+				if (expandButton !== null && expandButton !== void 0) {
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					expandBubble(expandButton);
+					return;
+				}
 				/* 聊天区里我们自己装饰出来的胶囊：点击复制路径（官方那种「打开文件」的通道我们拿不到）。 */
 				var sentChip = target.closest("[" + DECORATE_ATTR + "]");
 				if (sentChip !== null && sentChip !== void 0) {
@@ -840,6 +848,7 @@ window.__ModuleLoader__.load({
 				var shell = resolveShell();
 				if (shell !== null) restoreBareMentions(shell);
 				decorateSentMentions();
+				applyAllCollapse();
 			}, RESTORE_DEBOUNCE_MS);
 		}
 
@@ -993,6 +1002,137 @@ window.__ModuleLoader__.load({
 				"background:rgba(77,147,248,.16);color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
 				"font:inherit;white-space:nowrap;overflow-wrap:normal;text-overflow:ellipsis;}",
 				"[" + DECORATE_ATTR + "]:hover{background:rgba(77,147,248,.26);}"
+			].join("");
+			document.head.appendChild(tag);
+		}
+
+		/* ═════════ 第六件事：用户消息超过 5 行 → 折叠 ═════════
+		 *
+		 * 类名是 CSS Module 的 `<hash>_userRow` / `<hash>_bubble`，哈希跨版本会变，
+		 * 所以用属性子串选择器 `[class*="_userRow"]` 认结构 —— 这和认胶囊标记是同一个思路。
+		 *
+		 * 折叠只是视觉（max-height + 渐隐遮罩），不动 DOM 内容：复制、搜索、模型看到的都还是全文。
+		 */
+
+		/** 折叠行数上限。 */
+		var COLLAPSE_LINES = 5;
+		/** 折叠态的高度 = 行数 × 行高（行高从元素上现量，不同字号/缩放都跟得上）。 */
+		var COLLAPSED_ATTR = "data-dsh-inline-image-collapsed";
+		/** 展开按钮的标记属性。 */
+		var EXPAND_ATTR = "data-dsh-inline-image-expand";
+
+		/** 找用户消息的正文气泡（不含我装饰出来的胶囊、不含附件卡片）。 */
+		function userBubblesIn(root) {
+			var out = [];
+			var rows = root.querySelectorAll('[class*="_userRow"]');
+			for (var i = 0; i < rows.length; i += 1) {
+				var bubbles = rows[i].querySelectorAll('[class*="_bubble"]');
+				for (var j = 0; j < bubbles.length; j += 1) out.push(bubbles[j]);
+			}
+			return out;
+		}
+
+		/** 元素里有多少个视觉行（按内容高度 ÷ 行高，比数 \n 更准：自动换行也算）。 */
+		function visualLinesOf(bubble) {
+			try {
+				var style = window.getComputedStyle(bubble);
+				var lineHeight = parseFloat(style.lineHeight);
+				if (!isFinite(lineHeight) || lineHeight <= 0) {
+					var fontSize = parseFloat(style.fontSize);
+					lineHeight = isFinite(fontSize) && fontSize > 0 ? fontSize * 1.5 : 20;
+				}
+				/* 用 scrollHeight 量全文高度（此时可能已被折叠，所以先清掉限制再量）。 */
+				var hadLimit = bubble.style.maxHeight !== "";
+				var previous = bubble.style.maxHeight;
+				if (hadLimit) bubble.style.maxHeight = "none";
+				var full = bubble.scrollHeight;
+				if (hadLimit) bubble.style.maxHeight = previous;
+				return { lines: full / lineHeight, lineHeight: lineHeight, full: full };
+			} catch (error) {
+				return null;
+			}
+		}
+
+		/** 给一个气泡加/更新折叠；不需要折叠就撤掉（比如窗口变宽后行数变少了）。 */
+		function applyCollapse(bubble) {
+			try {
+				if (bubble === null || bubble === void 0) return;
+				/* 用户手动展开过就永久尊重（直到 React 重渲染换掉节点）。 */
+				if (bubble.getAttribute("data-dsh-inline-image-expanded") === "1") return;
+				var measured = visualLinesOf(bubble);
+				if (measured === null) return;
+				var shouldCollapse = measured.lines > COLLAPSE_LINES + 0.35;
+				var button = bubble.parentElement === null ? null : bubble.parentElement.querySelector("[" + EXPAND_ATTR + "]");
+				if (!shouldCollapse) {
+					bubble.removeAttribute(COLLAPSED_ATTR);
+					bubble.style.removeProperty("max-height");
+					bubble.style.removeProperty("overflow");
+					if (button !== null) button.parentNode.removeChild(button);
+					return;
+				}
+				var limit = Math.round(measured.lineHeight * COLLAPSE_LINES);
+				bubble.style.maxHeight = limit + "px";
+				bubble.style.overflow = "hidden";
+				bubble.setAttribute(COLLAPSED_ATTR, "1");
+				if (button === null) {
+					ensureCollapseStyle();
+					var host = bubble.parentElement;
+					if (host === null) return;
+					var created = document.createElement("button");
+					created.type = "button";
+					created.setAttribute(EXPAND_ATTR, "1");
+					created.textContent = "展开全文";
+					host.appendChild(created);
+				}
+			} catch (error) {
+				/* 折叠失败就保持原样，别把消息弄没 */
+			}
+		}
+
+		/** 点「展开全文」：去掉高度限制，并记住这条消息已被用户展开。 */
+		function expandBubble(button) {
+			var host = button.parentElement;
+			if (host === null) return;
+			var bubble = host.querySelector("[class*=\"_bubble\"][" + COLLAPSED_ATTR + "]");
+			if (bubble === null) return;
+			bubble.removeAttribute(COLLAPSED_ATTR);
+			bubble.setAttribute("data-dsh-inline-image-expanded", "1");
+			bubble.style.removeProperty("max-height");
+			bubble.style.removeProperty("overflow");
+			button.parentNode.removeChild(button);
+		}
+
+		/** 扫一遍聊天区，按当前宽度重新判定每条用户消息要不要折叠。 */
+		function applyAllCollapse() {
+			try {
+				if (typeof document === "undefined") return;
+				var zones = document.querySelectorAll("[data-chat-flow],[data-chat-turn]");
+				for (var z = 0; z < zones.length; z += 1) {
+					var bubbles = userBubblesIn(zones[z]);
+					for (var i = 0; i < bubbles.length; i += 1) applyCollapse(bubbles[i]);
+				}
+			} catch (error) {
+				/* 同上 */
+			}
+		}
+
+		/** 折叠样式：渐隐遮罩 + 展开按钮。 */
+		function ensureCollapseStyle() {
+			if (typeof document === "undefined") return;
+			var id = "dsh-inline-image/collapse.css";
+			if (document.querySelector('style[data-plugin-css="' + id + '"]') !== null) return;
+			var tag = document.createElement("style");
+			tag.dataset.plugin = "dsh-inline-image-ref";
+			tag.dataset.pluginCss = id;
+			tag.textContent = [
+				/* 折叠中的气泡：底部渐隐，暗示下面还有内容。 */
+				"[" + COLLAPSED_ATTR + "]{position:relative;}",
+				"[" + COLLAPSED_ATTR + "]::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2.2em;pointer-events:none;",
+				"background:linear-gradient(to bottom, transparent, var(--dsw-specific-bubble, var(--dsw-alias-bg-base, #1b1b1f)));}",
+				"[" + EXPAND_ATTR + "]{display:inline-flex;align-items:center;gap:4px;margin:2px 0 0;padding:2px 8px;border:none;border-radius:6px;",
+				"background:transparent;color:var(--dsw-alias-state-business-primary,#4d93f8);cursor:pointer;",
+				"font:inherit;font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.6;align-self:flex-end;}",
+				"[" + EXPAND_ATTR + "]:hover{background:rgba(77,147,248,.12);}"
 			].join("");
 			document.head.appendChild(tag);
 		}
@@ -1351,6 +1491,8 @@ window.__ModuleLoader__.load({
 				document.addEventListener("click", onClick, true);
 				window.addEventListener("scroll", onScroll, true);
 				document.addEventListener("keydown", onKeydown, true);
+				/* 宽度变了，一条消息的「几行」就变了：重算折叠（不折叠的会自动还原）。 */
+				window.addEventListener("resize", scheduleRestore, true);
 				/* 草稿一变就可能出现「裸 @图片路径」（回退对话、恢复草稿的典型结果）：盯 DOM 变动，
 				   防抖之后把那处文字换回胶囊。固定间隔触发（不重置计时器），连续打字也不会饿死它。 */
 				if (typeof MutationObserver === "function" && typeof document.body !== "undefined" && document.body !== null) {
@@ -1367,6 +1509,7 @@ window.__ModuleLoader__.load({
 					document.removeEventListener("click", onClick, true);
 					window.removeEventListener("scroll", onScroll, true);
 					document.removeEventListener("keydown", onKeydown, true);
+					window.removeEventListener("resize", scheduleRestore, true);
 					if (restoreObserver !== null) {
 						restoreObserver.disconnect();
 						restoreObserver = null;
